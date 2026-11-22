@@ -1,0 +1,102 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// The test binary stands in for the command: run starts os.Args[0] with -once,
+// and with the variable set the binary does what the command does.
+func TestMain(m *testing.M) {
+	if os.Getenv("PHASES_AS_COMMAND") != "" {
+		if err := run(os.Args[1:], os.Stdout, os.Args[0]); err != nil {
+			os.Stderr.WriteString(err.Error() + "\n")
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func TestRunTable(t *testing.T) {
+	t.Setenv("PHASES_AS_COMMAND", "1")
+	var w bytes.Buffer
+	if err := run([]string{"-rounds", "2"}, &w, os.Args[0]); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range phaseNames {
+		if !strings.Contains(w.String(), "| "+p+" |") {
+			t.Errorf("no row for %s in:\n%s", p, w.String())
+		}
+	}
+}
+
+func TestRunRefusals(t *testing.T) {
+	var w bytes.Buffer
+	if err := run([]string{"-rounds", "0"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "-rounds") {
+		t.Errorf("zero rounds: %v", err)
+	}
+	if err := run([]string{"-nonsense"}, &w, "x"); err == nil {
+		t.Error("an unknown flag was accepted")
+	}
+	if err := run([]string{"-rounds", "1"}, &w, filepath.Join(t.TempDir(), "absent")); err == nil || !strings.Contains(err.Error(), "-once") {
+		t.Errorf("a missing command: %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "absent")
+	t.Setenv("TMPDIR", missing)
+	if err := run([]string{"-rounds", "1"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "absent") {
+		t.Errorf("no scratch directory: %v", err)
+	}
+}
+
+func TestOnceRefusals(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "in.elf")
+	if err := os.WriteFile(good, fixture(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	junk := filepath.Join(dir, "junk")
+	if err := os.WriteFile(junk, []byte("not an elf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, in, out, want string }{
+		{"no input", filepath.Join(dir, "none"), filepath.Join(dir, "o"), "read"},
+		{"not an elf", junk, filepath.Join(dir, "o"), "parse"},
+		{"no output directory", good, filepath.Join(dir, "none", "o"), "write"},
+	} {
+		var w bytes.Buffer
+		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to start with %q", c.name, err, c.want)
+		}
+	}
+	var w bytes.Buffer
+	if err := once1(&w, good, filepath.Join(dir, "o")); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := parseLines(w.String()); err != nil || len(got) != len(phaseNames) {
+		t.Errorf("parse of own output: %v, %d lines", err, len(got))
+	}
+}
+
+func TestParseLines(t *testing.T) {
+	ok := "read 1000 3\nparse 2000 4\nflatten 3000 5\nwrite 4000 6\n"
+	got, err := parseLines(ok)
+	if err != nil || got[1].d != 2*time.Microsecond || got[2].allocs != 5 || got[3].phase != "write" {
+		t.Errorf("got %+v, %v", got, err)
+	}
+	for _, bad := range []string{"read 1\n", "read x 3\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1 y\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1000 3\n", ""} {
+		if _, err := parseLines(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestMed(t *testing.T) {
+	if got := med([]time.Duration{5 * time.Microsecond, time.Microsecond, 3 * time.Microsecond}); got != 3*time.Microsecond {
+		t.Errorf("med = %v", got)
+	}
+}
