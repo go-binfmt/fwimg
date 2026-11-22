@@ -31,14 +31,28 @@ func TestRun(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", want, w.String())
 		}
 	}
-	for _, args := range [][]string{
-		{"-rounds", "0", "-cmd", "t=true"},
-		{"-rounds", "1"},
-		{"-rounds", "1", "-cmd", "m=/nonexistent/binary"},
-		{"-bogus"},
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-rounds", "0", "-cmd", "t=true"}, "-rounds must be at least 1"},
+		{[]string{"-rounds", "1"}, "at least one -cmd"},
+		{[]string{"-rounds", "1", "-cmd", "m=/nonexistent/binary"}, "m: "},
+		{[]string{"-bogus", "-cmd", "t=true"}, "bogus"},
 	} {
-		if err := run(args, &bytes.Buffer{}); err == nil {
-			t.Errorf("run(%q) succeeded", args)
+		err := run(c.args, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("run(%q) = %v, want an error containing %q", c.args, err, c.want)
 		}
+	}
+}
+
+func TestTimeOne(t *testing.T) {
+	d, _, err := timeOne([]string{"true"})
+	if err != nil || d <= 0 {
+		t.Fatalf("timeOne(true) = %v, %v", d, err)
+	}
+	if _, _, err := timeOne([]string{"false"}); err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Errorf("timeOne(false) = %v, want exit status 1", err)
 	}
 }
