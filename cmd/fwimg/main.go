@@ -56,7 +56,11 @@ func (e usageErr) Error() string { return e.msg }
 
 // maxInput is the largest ELF the command reads: the library addresses the
 // input with int on 32-bit platforms, and a firmware ELF is far smaller.
-const maxInput = math.MaxInt32
+var maxInput int64 = math.MaxInt32
+
+// statFile is replaceable in tests: an open descriptor's Stat does not fail on
+// demand.
+var statFile = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
 
 type options struct {
 	output, format, pad, load, entry, name string
@@ -169,16 +173,16 @@ func run(o *options, input string) error {
 		return err
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	st, err := statFile(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", input, err)
 	}
 	if st.Size() > maxInput {
-		return fmt.Errorf("%s is %d bytes, above the %d byte input limit", input, st.Size(), int64(maxInput))
+		return fmt.Errorf("%s is %d bytes, above the %d byte input limit", input, st.Size(), maxInput)
 	}
 	ef, err := elf.NewFile(f)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %w", input, err)
 	}
 	flat, base, err := fwimg.Flatten(f, st.Size(), fo)
 	if err != nil {

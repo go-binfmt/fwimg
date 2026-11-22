@@ -124,7 +124,8 @@ func TestRefusals(t *testing.T) {
 		{"bad load", []string{"--load", "0x100000000", "-o", out, good}, "--load", 2},
 		{"bad max-size", []string{"--max-size", "x", "-o", out, good}, "--max-size", 2},
 		{"missing file", []string{"-o", out, filepath.Join(t.TempDir(), "absent")}, "no such file", 1},
-		{"not an ELF", []string{"-o", out, notELF}, "ELF", 1},
+		{"bad entry", []string{"--entry", "0x100000000", "-o", out, good}, "--entry", 2},
+		{"not an ELF", []string{"-o", out, notELF}, notELF + ": ", 1},
 		{"distant segments", []string{"-o", out, far}, "larger than the allowed size", 1},
 		{"max-size honoured", []string{"--max-size", "2", "-o", out, good}, "larger than the allowed size", 1},
 		{"base above 32 bits", []string{"-O", "srec", "-o", out, high}, "image base", 1},
@@ -149,6 +150,36 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
+// The input limit and a failing Stat are driven through their seams: a 2 GiB
+// ELF and a descriptor whose fstat fails are not available on demand.
+func TestInputLimitAndStatFailure(t *testing.T) {
+	in := simple(t)
+	out := filepath.Join(t.TempDir(), "never")
+	oldMax, oldStat := maxInput, statFile
+	defer func() { maxInput, statFile = oldMax, oldStat }()
+
+	size := int64(len(elfgen.Build(elf.EM_AARCH64, 0, []elfgen.Seg{{Paddr: 0x80000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("ABCD")}})))
+	maxInput = size // exactly at the limit: accepted
+	if _, _, err := runCmd(t, "-o", out, in); err != nil {
+		t.Fatalf("at the limit: %v", err)
+	}
+	if err := os.Remove(out); err != nil {
+		t.Fatal(err)
+	}
+	maxInput = size - 1
+	if _, _, err := runCmd(t, "-o", out, in); err == nil || !strings.Contains(err.Error(), "input limit") {
+		t.Fatalf("one byte over the limit: err = %v", err)
+	}
+	maxInput = oldMax
+	statFile = func(*os.File) (os.FileInfo, error) { return nil, os.ErrPermission }
+	if _, _, err := runCmd(t, "-o", out, in); err == nil || !strings.Contains(err.Error(), in+": ") {
+		t.Fatalf("failing stat: err = %v", err)
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Errorf("a refused run wrote %s", out)
+	}
+}
+
 func TestHighBaseWithExplicitAddresses(t *testing.T) {
 	high := writeELF(t, elf.EM_X86_64, 0xffffffff80001000, elfgen.Seg{Paddr: 0xffffffff80000000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")})
 	out := filepath.Join(t.TempDir(), "u")
@@ -161,6 +192,10 @@ func TestVersion(t *testing.T) {
 	old := Version
 	defer func() { Version = old }()
 	Version = "v1.2.3"
+	oldBI := readBuildInfo
+	defer func() { readBuildInfo = oldBI }()
+	// A stamped Version wins over the build info.
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{Main: debug.Module{Version: "v9.9.9"}}, true }
 	if o, _, err := runCmd(t, "--version"); err != nil || o != "fwimg v1.2.3\n" {
 		t.Fatalf("out=%q err=%v", o, err)
 	}
