@@ -140,3 +140,29 @@ jobs:
           uptime
           taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -fwimg "$RUNNER_TEMP/fwimg" -hello "$RUNNER_TEMP/hello" -cobra "$RUNNER_TEMP/cobraonly" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
           cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
+      # Where the time above a cobra root that does nothing goes
+      # (go-binfmt/fwimg#2): the steps of one cold fwimg process, then what
+      # each import and each way of doing the I/O adds to cobraonly.
+      - run: |
+          go build -o "$RUNNER_TEMP/phases" ./internal/phases
+          go build -o "$RUNNER_TEMP/startup" ./internal/startup
+          go build -tags floor_osio -o "$RUNNER_TEMP/v-osio" ./internal/floor/cobraonly
+          go build -tags floor_sysio -o "$RUNNER_TEMP/v-sysio" ./internal/floor/cobraonly
+          go build -tags floor_crc32 -o "$RUNNER_TEMP/v-crc32" ./internal/floor/cobraonly
+          go build -tags floor_binary -o "$RUNNER_TEMP/v-binary" ./internal/floor/cobraonly
+          go build -tags floor_debug -o "$RUNNER_TEMP/v-debug" ./internal/floor/cobraonly
+          go build -tags floor_elfpatch -o "$RUNNER_TEMP/v-elfpatch" ./internal/floor/cobraonly
+          go build -tags floor_fwimg -o "$RUNNER_TEMP/v-fwimglib" ./internal/floor/cobraonly
+          head -c 1024 /dev/zero > "$RUNNER_TEMP/in.dat"
+          taskset -c 0 "$RUNNER_TEMP/phases" -rounds 100 | tee "$RUNNER_TEMP/phases.md"
+          taskset -c 0 "$RUNNER_TEMP/startup" -rounds 400 \
+            -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.dat $RUNNER_TEMP/o1" \
+            -cmd "+ os read and write=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.dat $RUNNER_TEMP/o2" \
+            -cmd "+ syscall read and write=$RUNNER_TEMP/v-sysio $RUNNER_TEMP/in.dat $RUNNER_TEMP/o3" \
+            -cmd "+ import hash/crc32=$RUNNER_TEMP/v-crc32 $RUNNER_TEMP/in.dat $RUNNER_TEMP/o4" \
+            -cmd "+ import encoding/binary=$RUNNER_TEMP/v-binary $RUNNER_TEMP/in.dat $RUNNER_TEMP/o5" \
+            -cmd "+ import runtime/debug=$RUNNER_TEMP/v-debug $RUNNER_TEMP/in.dat $RUNNER_TEMP/o6" \
+            -cmd "+ import elfpatch=$RUNNER_TEMP/v-elfpatch $RUNNER_TEMP/in.dat $RUNNER_TEMP/o7" \
+            -cmd "+ import fwimg library=$RUNNER_TEMP/v-fwimglib $RUNNER_TEMP/in.dat $RUNNER_TEMP/o8" \
+            -cmd "hello=$RUNNER_TEMP/hello" | tee "$RUNNER_TEMP/ablation.md"
+          { echo; cat "$RUNNER_TEMP/phases.md"; echo; cat "$RUNNER_TEMP/ablation.md"; } >> "$GITHUB_STEP_SUMMARY"

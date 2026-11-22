@@ -20,6 +20,33 @@ func TestRootCmdDoesNothing(t *testing.T) {
 	}
 }
 
+// A build tag may install work; it runs with exactly two arguments, its error
+// fails the command, and any other argument count leaves it alone.
+func TestWork(t *testing.T) {
+	old := work
+	defer func() { work = old }()
+	var got [][2]string
+	var fail error
+	work = func(in, out string) error { got = append(got, [2]string{in, out}); return fail }
+	run := func(args ...string) error {
+		c := RootCmd()
+		c.SetOut(&bytes.Buffer{})
+		c.SetErr(&bytes.Buffer{})
+		c.SetArgs(args)
+		return c.Execute()
+	}
+	if err := run("a", "b"); err != nil || len(got) != 1 || got[0] != [2]string{"a", "b"} {
+		t.Fatalf("two arguments: err %v, calls %v", err, got)
+	}
+	if err := run("a"); err != nil || len(got) != 1 {
+		t.Errorf("one argument: err %v, calls %v", err, got)
+	}
+	fail = os.ErrInvalid
+	if err := run("a", "b"); err != os.ErrInvalid {
+		t.Errorf("failing work: err = %v", err)
+	}
+}
+
 func TestMain_(t *testing.T) {
 	old, oldExit := os.Args, osExit
 	defer func() { os.Args, osExit = old, oldExit }()
