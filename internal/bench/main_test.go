@@ -116,6 +116,79 @@ func TestFixturesRefusals(t *testing.T) {
 	})
 }
 
+// The floor table has one row, four timings, the difference and a verdict,
+// and refuses one reference program without the other and a failing one.
+func TestRunFloor(t *testing.T) {
+	tr, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true(1)")
+	}
+	fl, err := exec.LookPath("false")
+	if err != nil {
+		t.Skip("no false(1)")
+	}
+	mk := func(dir string) ([]fixture, error) {
+		p := filepath.Join(dir, "x")
+		return []fixture{{"fx", p}}, os.WriteFile(p, []byte("x"), 0o644)
+	}
+	base := []string{"-objcopy", tr, "-mkimage", tr, "-fwimg", tr, "-rounds", "4"}
+	var w bytes.Buffer
+	if err := run(append(base, "-hello", tr, "-cobra", tr), &w, mk); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"| objcopy | fwimg | cobra-only | hello | fwimg minus cobra-only | noise (MAD) |", "fwimg minus cobra-only is "} {
+		if !strings.Contains(w.String(), want) {
+			t.Errorf("no %q in:\n%s", want, w.String())
+		}
+	}
+	if err := run(append(base, "-hello", tr), &w, mk); err == nil || !strings.Contains(err.Error(), "go together") {
+		t.Errorf("one reference program: err = %v", err)
+	}
+	if err := run(append(base, "-cobra", tr), &w, mk); err == nil || !strings.Contains(err.Error(), "go together") {
+		t.Errorf("the other one alone: err = %v", err)
+	}
+	for _, bad := range [][]string{{"-hello", fl, "-cobra", tr}, {"-hello", tr, "-cobra", fl}} {
+		if err := run(append(base, bad...), &w, mk); err == nil || !strings.Contains(err.Error(), fl) {
+			t.Errorf("%v: err = %v, want the failing program named", bad, err)
+		}
+	}
+}
+
+// paired takes the median of the round-by-round difference and the median
+// absolute deviation around it; the inputs are left in order.
+func TestPaired(t *testing.T) {
+	a := []time.Duration{110, 130, 120, 400, 125}
+	b := []time.Duration{100, 100, 100, 100, 100}
+	// differences 10, 30, 20, 300, 25: median 25; deviations 15, 5, 5, 275, 0: median 5.
+	diff, noise := paired(a, b)
+	if diff != 25 || noise != 5 {
+		t.Errorf("diff, noise = %v, %v, want 25, 5", diff, noise)
+	}
+	if a[3] != 400 || b[0] != 100 {
+		t.Error("paired reordered its inputs")
+	}
+	// A negative difference is as large as its absolute value.
+	if d, n := paired(b, a); d != -25 || n != 5 {
+		t.Errorf("reversed: %v, %v, want -25, 5", d, n)
+	}
+}
+
+func TestVerdict(t *testing.T) {
+	for _, c := range []struct {
+		diff, noise time.Duration
+		want        string
+	}{
+		{5 * time.Microsecond, 5 * time.Microsecond, "within the noise"},
+		{-5 * time.Microsecond, 5 * time.Microsecond, "within the noise"},
+		{6 * time.Microsecond, 5 * time.Microsecond, "is 6µs, beyond the noise of 5µs"},
+		{-6 * time.Microsecond, 5 * time.Microsecond, "is -6µs, beyond the noise of 5µs"},
+	} {
+		if got := verdict(c.diff, c.noise); !strings.Contains(got, c.want) {
+			t.Errorf("verdict(%v, %v) = %q, want %q in it", c.diff, c.noise, got, c.want)
+		}
+	}
+}
+
 func TestOpsBuildArgv(t *testing.T) {
 	tl := tools{"objcopy", "mkimage", "fwimg"}
 	for _, o := range ops {

@@ -74,8 +74,13 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 	fs.StringVar(&t.mkimage, "mkimage", "mkimage", "mkimage binary")
 	fs.StringVar(&t.fwimg, "fwimg", "fwimg", "fwimg binary")
 	rounds := fs.Int("rounds", 40, "interleaved rounds per operation and file")
+	hello := fs.String("hello", "", "empty Go program (internal/floor/hello), built like fwimg: with -cobra, adds the floor table")
+	cobra := fs.String("cobra", "", "cobra root that does nothing (internal/floor/cobraonly), built like fwimg")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if (*hello == "") != (*cobra == "") {
+		return errors.New("-hello and -cobra go together: the floor table needs both")
 	}
 	if *rounds < 1 {
 		return errors.New("-rounds must be at least 1")
@@ -131,7 +136,67 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 			fmt.Fprintf(w, "| %s | `%s` | %s | %s | %.1fx |\n", f.name, o.name, mr.Round(10*time.Microsecond), mo.Round(10*time.Microsecond), float64(mr)/float64(mo))
 		}
 	}
+	if *hello != "" {
+		return floor(w, t, *hello, *cobra, files[0].path, out, *rounds)
+	}
 	return nil
+}
+
+// floor times, on the first fixture, `objcopy -O binary`, fwimg, a cobra root
+// that does nothing and an empty Go program, the four rotating through the
+// start position every round, and prints what the Go runtime and cobra cost
+// before fwimg does any work: fwimg minus cobra-only, with the noise of that
+// paired difference (the median absolute deviation over the rounds).
+func floor(w io.Writer, t tools, hello, cobra, in, out string, rounds int) error {
+	procs := [4][]string{
+		ops[0].ref(t, in, "", out),
+		append([]string{t.fwimg}, ops[0].ours(in, out)...),
+		{cobra},
+		{hello},
+	}
+	var samples [4][]time.Duration
+	for r := 0; r < rounds; r++ {
+		for k := range procs {
+			i := (k + r) % len(procs)
+			d, err := timeOne(procs[i])
+			if err != nil {
+				return fmt.Errorf("%s: %w", procs[i][0], err)
+			}
+			samples[i] = append(samples[i], d)
+		}
+	}
+	diff, noise := paired(samples[1], samples[2])
+	fmt.Fprintf(w, "\nStart-up floor, 1 KiB, `-O binary`; median wall time per process; %d rounds, the start position rotating\n\n", rounds)
+	fmt.Fprintln(w, "| objcopy | fwimg | cobra-only | hello | fwimg minus cobra-only | noise (MAD) |")
+	fmt.Fprintln(w, "|---:|---:|---:|---:|---:|---:|")
+	fmt.Fprintf(w, "| %s | %s | %s | %s | %s | %s |\n",
+		median(samples[0]).Round(time.Microsecond), median(samples[1]).Round(time.Microsecond),
+		median(samples[2]).Round(time.Microsecond), median(samples[3]).Round(time.Microsecond),
+		diff.Round(time.Microsecond), noise.Round(time.Microsecond))
+	fmt.Fprintf(w, "\n%s\n", verdict(diff, noise))
+	return nil
+}
+
+// paired is the median of a[i]-b[i] and the median absolute deviation of the
+// differences around it. The inputs must be in round order and have the same
+// length; they are not reordered.
+func paired(a, b []time.Duration) (diff, noise time.Duration) {
+	diffs := make([]time.Duration, len(a))
+	for i := range diffs {
+		diffs[i] = a[i] - b[i]
+	}
+	diff = median(slices.Clone(diffs))
+	for i := range diffs {
+		diffs[i] = max(diffs[i]-diff, diff-diffs[i])
+	}
+	return diff, median(diffs)
+}
+
+func verdict(diff, noise time.Duration) string {
+	if max(diff, -diff) <= noise {
+		return "fwimg minus cobra-only is within the noise of the rounds."
+	}
+	return fmt.Sprintf("fwimg minus cobra-only is %s, beyond the noise of %s.", diff.Round(time.Microsecond), noise.Round(time.Microsecond))
 }
 
 func median(d []time.Duration) time.Duration {

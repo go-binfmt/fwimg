@@ -134,7 +134,9 @@ jobs:
           sudo apt-get install -y -qq gcc binutils u-boot-tools
       - run: |
           go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
+          go build -o "$RUNNER_TEMP/hello" ./internal/floor/hello
+          go build -o "$RUNNER_TEMP/cobraonly" ./internal/floor/cobraonly
           go build -o "$RUNNER_TEMP/bench" ./internal/bench
           uptime
-          taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -fwimg "$RUNNER_TEMP/fwimg" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
+          taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -fwimg "$RUNNER_TEMP/fwimg" -hello "$RUNNER_TEMP/hello" -cobra "$RUNNER_TEMP/cobraonly" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
           cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
