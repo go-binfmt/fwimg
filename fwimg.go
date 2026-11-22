@@ -425,6 +425,11 @@ func appendHex(out, b []byte) []byte {
 	return out
 }
 
+// maxText is the largest text output an int can index on this platform. It is
+// a variable so a test can lower it: the real limit needs a 32-bit build and a
+// gigabyte of input.
+var maxText uint64 = math.MaxInt
+
 // textSize estimates the encoded size of n data bytes in lines of per bytes
 // (hex digits plus roughly 16 bytes of record framing per line), so the
 // encoders allocate once. An output that cannot be indexed by an int on this
@@ -432,7 +437,7 @@ func appendHex(out, b []byte) []byte {
 // input wraps negative.
 func textSize(n, per int) (int, error) {
 	est := 2*uint64(n) + (uint64(n/per)+3)*16
-	if est > math.MaxInt {
+	if est > maxText {
 		return 0, fmt.Errorf("%w: %d data bytes encode to about %d bytes of text", ErrTooLarge, n, est)
 	}
 	return int(est), nil

@@ -579,6 +579,36 @@ func TestUImage_RefusesPayloadBeyondTheSizeField(t *testing.T) {
 	}
 }
 
+// The text encoders preallocate; an output an int cannot index is refused
+// (ErrTooLarge), which on 32 bits is reached by a 1 GiB input. The bound is
+// lowered so every platform drives both sides of it.
+func TestTextEncoders_RefuseWhatAnIntCannotIndex(t *testing.T) {
+	if maxText != math.MaxInt {
+		t.Fatalf("maxText = %d, want math.MaxInt", maxText)
+	}
+	old := maxText
+	defer func() { maxText = old }()
+	maxText = 200
+	data := make([]byte, 100) // est = 2*100 + (100/16+3)*16 = 344
+	if _, err := SREC(0, data, "", 0, 16); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("SREC: err = %v, want ErrTooLarge", err)
+	}
+	if _, err := IHEX(0, data, 16); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("IHEX: err = %v, want ErrTooLarge", err)
+	}
+	if n, err := textSize(10, 16); err != nil || n != 2*10+3*16 {
+		t.Errorf("textSize(10,16) = %d, %v; want %d, nil", n, err, 2*10+3*16)
+	}
+	maxText = uint64(2*10 + 3*16) // exactly at the bound
+	if _, err := textSize(10, 16); err != nil {
+		t.Errorf("at the bound: err = %v", err)
+	}
+	maxText--
+	if _, err := textSize(10, 16); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("one past the bound: err = %v, want ErrTooLarge", err)
+	}
+}
+
 // --- architecture names -------------------------------------------------------
 
 func TestArchFromName(t *testing.T) {
