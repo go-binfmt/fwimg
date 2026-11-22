@@ -113,8 +113,16 @@ and the cobra command tree; that gap is tracked as an open performance issue.
 The 1 KiB rows above were measured before fwimg stopped importing `debug/elf`
 (v0.2.0 reads the program headers with `elfpatch.Parse` instead, which removes
 `debug/dwarf`, `compress/flate` and `internal/zstd` from the process). A Go
-process that does nothing already costs more than objcopy at this size:
-`internal/startup` times them in interleaved rounds.
+process that does nothing already costs about as much as objcopy at this size,
+and cobra adds most of the rest. The CI `bench` job prints that floor on the
+runner (1 KiB, `-O binary`, 60 rounds, Ubuntu x86-64, one core):
+
+| objcopy | fwimg | cobra-only | hello (empty main) | fwimg minus cobra-only | noise |
+|---:|---:|---:|---:|---:|---:|
+| 1.626ms | 2.625ms | 2.274ms | 1.384ms | 348µs | 86µs |
+
+About 350µs of the gap is fwimg's own work, beyond the noise; it is tracked in
+go-binfmt/fwimg#2. `internal/startup` times processes and counts page faults.
 From 4 MiB up it is even or faster, and mkimage is far slower.
 
 ## Development
