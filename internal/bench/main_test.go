@@ -58,6 +58,63 @@ func TestRunTable(t *testing.T) {
 	}
 }
 
+func TestRunRefusals(t *testing.T) {
+	tr, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true(1)")
+	}
+	fl, err := exec.LookPath("false")
+	if err != nil {
+		t.Skip("no false(1)")
+	}
+	mk := func(dir string) ([]fixture, error) {
+		p := filepath.Join(dir, "x")
+		return []fixture{{"fx", p}}, os.WriteFile(p, []byte("x"), 0o644)
+	}
+	var w bytes.Buffer
+	if err := run([]string{"-nonsense"}, &w, mk); err == nil {
+		t.Error("an unknown flag did not fail the run")
+	}
+	// fwimg failing to make the flat payload names the file.
+	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", fl, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "fwimg on fx") {
+		t.Errorf("failing fwimg: err = %v", err)
+	}
+	// No scratch directory, no run.
+	missing := filepath.Join(t.TempDir(), "absent")
+	t.Setenv("TMPDIR", missing)
+	t.Setenv("TMP", missing)
+	t.Setenv("TEMP", missing)
+	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", tr, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "absent") {
+		t.Errorf("no temp dir: err = %v", err)
+	}
+}
+
+// Each step of the fixture builder is refused in turn by putting a directory
+// where its file would go, and the compiler by taking it off the PATH.
+func TestFixturesRefusals(t *testing.T) {
+	for _, c := range []struct{ name, blocker, want string }{
+		{"linker script", "fw.ld", "fw.ld"},
+		{"blob", "blob-1", "blob-1"},
+		{"source", "fw-1.c", "fw-1.c"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dir, c.blocker), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixtures(dir); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want it to name %s", err, c.want)
+			}
+		})
+	}
+	t.Run("no compiler", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if _, err := fixtures(t.TempDir()); err == nil || !strings.Contains(err.Error(), "gcc") {
+			t.Fatalf("err = %v, want it to name gcc", err)
+		}
+	})
+}
+
 func TestOpsBuildArgv(t *testing.T) {
 	tl := tools{"objcopy", "mkimage", "fwimg"}
 	for _, o := range ops {

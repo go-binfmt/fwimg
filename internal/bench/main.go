@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -177,17 +178,7 @@ func fixtures(dir string) ([]fixture, error) {
 		for i := range chunk {
 			chunk[i] = byte(i*131 + 7)
 		}
-		fh, err := os.Create(blob)
-		if err != nil {
-			return nil, err
-		}
-		for i := 0; i < f.kib; i++ {
-			if _, err := fh.Write(chunk); err != nil {
-				fh.Close()
-				return nil, err
-			}
-		}
-		if err := fh.Close(); err != nil {
+		if err := os.WriteFile(blob, bytes.Repeat(chunk, f.kib), 0o644); err != nil {
 			return nil, err
 		}
 		src := filepath.Join(dir, fmt.Sprintf("fw-%d.c", f.kib))
