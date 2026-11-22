@@ -1,4 +1,4 @@
-<p align="center"><img src="https://raw.githubusercontent.com/go-binfmt/brand/main/social/go-binfmt.png" alt="go-binfmt/fwimg" width="720"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/go-binfmt/brand/main/social/go-binfmt-fwimg.png" alt="go-binfmt/fwimg" width="720"></p>
 
 # go-binfmt/fwimg
 
@@ -23,7 +23,7 @@ fwimg -O uimage --load 0x80000 --entry 0x80000 --name linux -o uImage kernel.elf
 ```
 
 The library is `github.com/go-binfmt/fwimg`: `Flatten`, `SREC`, `IHEX`,
-`UImage`, plus `ArchFromELF` / `ArchFromName` for the uImage architecture code.
+`UImage`, plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
 
 ```go
 flat, base, err := fwimg.Flatten(f, size, fwimg.FlattenOptions{Pad: 0xff})
@@ -109,7 +109,12 @@ Ubuntu x86-64 runner into its job summary.
 | 32 MiB | `-O uimage` | 176.64ms | 13.31ms | 13.3x |
 
 On a 1 KiB file fwimg is behind objcopy by the fixed cost of starting a Go process
-(and the cobra command tree); that gap is tracked as an open performance issue.
+and the cobra command tree; that gap is tracked as an open performance issue.
+The 1 KiB rows above were measured before fwimg stopped importing `debug/elf`
+(v0.2.0 reads the program headers with `elfpatch.Parse` instead, which removes
+`debug/dwarf`, `compress/flate` and `internal/zstd` from the process). A Go
+process that does nothing already costs more than objcopy at this size:
+`internal/startup` times them in interleaved rounds.
 From 4 MiB up it is even or faster, and mkimage is far slower.
 
 ## Development
