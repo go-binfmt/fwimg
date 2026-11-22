@@ -1,0 +1,38 @@
+# The vulnerability lane, on its own file so it can run on its own clock: an
+# advisory does not wait for a push, so it also runs daily. GitHub disables a
+# scheduled workflow after 60 days of repository inactivity and a disabled cron
+# reports nothing rather than failing: workflow_dispatch is there to prove the
+# lane alive by hand.
+name: vuln
+
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions: { contents: read }
+
+jobs:
+  vuln:
+    name: govulncheck, judged by vulngate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      # No `set -o pipefail` and no bare exit status: govulncheck exits non-zero
+      # over findings it has decided are NOT called, and zero over some it has,
+      # which is why vulngate judges. The emptiness check is the other half: a
+      # scan that wrote nothing must not read as nothing found. The scanner is
+      # @latest (it should know this morning's advisory), the judge is pinned.
+      - name: govulncheck, judged by vulngate
+        run: |
+          set -eu
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install github.com/go-fleettools/fleettools/cmd/vulngate@v0.23.0
+          BIN="$(go env GOPATH)/bin"
+          "$BIN/govulncheck" -format json ./... > "$RUNNER_TEMP/vuln.json" || true
+          test -s "$RUNNER_TEMP/vuln.json" || { echo "::error::govulncheck wrote nothing at all"; exit 1; }
+          "$BIN/vulngate" -go "$(go env GOVERSION)" "$RUNNER_TEMP/vuln.json"

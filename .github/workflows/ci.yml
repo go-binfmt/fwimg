@@ -1,0 +1,140 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: { contents: read }
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      # The differential lane needs the reference tools and a compiler. It is
+      # REQUIRED here: FWIMG_REQUIRE_DIFF turns its skip into a failure, so a
+      # runner image that loses u-boot-tools cannot turn the lane into a green tick.
+      - name: reference tools (objcopy, mkimage, gcc)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc binutils u-boot-tools
+          objcopy --version
+          mkimage -V
+      - run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # -race and -count=1: a cached PASS must not stand in for this run. The
+      # committed fuzz corpus (testdata/fuzz/FuzzFlatten) replays as ordinary tests.
+      - name: test, including the differential lane against objcopy and mkimage
+        env: { FWIMG_REQUIRE_DIFF: "1" }
+        run: go test -race -count=1 -v -run 'Differential' ./...
+      - name: test everything else
+        run: go test -race -count=1 ./...
+
+  # 32-bit: every size is an int there, and a bound that is only right in 64
+  # bits is the kind of bug a 64-bit lane cannot show. Runs natively on the
+  # amd64 runner.
+  test-386:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - name: reference tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc binutils u-boot-tools
+      - name: go test (GOARCH=386)
+        env: { GOARCH: '386', CGO_ENABLED: '0', FWIMG_REQUIRE_DIFF: "1" }
+        run: go test -count=1 ./...
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - name: fuzz FuzzFlatten for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzFlatten$' -fuzztime 60s .
+
+  # s390x is BIG-ENDIAN; the ELF parser and the encoders run under that byte
+  # order here.
+  s390x:
+    name: test (s390x, qemu, big-endian)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user qemu-user-binfmt
+          q=qemu-s390x-static; command -v "$q" >/dev/null 2>&1 || q=qemu-s390x
+          echo "QEMU_EXEC=$q" >> "$GITHUB_ENV"
+      - name: go test (GOARCH=s390x under qemu)
+        env:
+          CGO_ENABLED: '0'
+          GOARCH: s390x
+          GOOS: linux
+          # host tools cannot be exec'd from inside the emulator
+          FWIMG_SKIP_DIFF: "emulated: host objcopy/mkimage/gcc cannot be exec'd from qemu-user"
+        run: |
+          echo "running s390x under $QEMU_EXEC"
+          go test -count=1 -exec "$QEMU_EXEC" ./...
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: linux,   goarch: riscv64 }
+          - { goos: linux,   goarch: ppc64le }
+          - { goos: linux,   goarch: s390x }
+          - { goos: linux,   goarch: loong64 }
+          - { goos: linux,   goarch: '386' }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: freebsd, goarch: amd64 }
+          - { goos: netbsd,  goarch: amd64 }
+          - { goos: openbsd, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }} (CGO=0)
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+  darwin:
+    name: test (macOS)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - run: go test -count=1 ./...
+
+  # Single core, interleaved rounds, against the same objcopy and mkimage the
+  # differential lane uses. The table is printed into the job summary; README
+  # quotes it.
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc binutils u-boot-tools
+      - run: |
+          go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
+          go build -o "$RUNNER_TEMP/bench" ./internal/bench
+          uptime
+          taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -fwimg "$RUNNER_TEMP/fwimg" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
+          cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      # fetch-depth 0: Go stamps the module version from VCS state, and a
+      # shallow checkout can leave the tag unreachable.
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - name: Resolve tag
+        id: tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"; git checkout "$tag"
+          else
+            tag="$REF_NAME"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      # dist lives OUTSIDE the checkout: an untracked dist/ dirties the tree and
+      # every later build would be stamped +dirty.
+      - name: Build release binaries
+        run: |
+          set -eu
+          DIST="$RUNNER_TEMP/dist"; mkdir -p "$DIST"
+          for target in linux/amd64 linux/arm64 linux/riscv64 linux/ppc64le linux/s390x linux/loong64 linux/386 darwin/arm64 darwin/amd64 freebsd/amd64 netbsd/amd64 openbsd/amd64 windows/amd64; do
+            os=${target%/*}; arch=${target#*/}; out="fwimg-${os}-${arch}"
+            [ "$os" = "windows" ] && out="${out}.exe"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$DIST/$out" ./cmd/fwimg
+          done
+          cd "$DIST" && sha256sum fwimg-* > SHA256SUMS && cat SHA256SUMS
+      - name: The binaries must say which version they are
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -eu
+          DIST="$RUNNER_TEMP/dist"; bad=0
+          for bin in "$DIST"/fwimg-*; do
+            stamped=$(go version -m "$bin" | awk '$1=="mod" {print $3; exit}')
+            echo "$(basename "$bin"): $stamped"
+            [ "$stamped" = "$TAG" ] || { echo "::error::$bin stamps $stamped, want $TAG"; bad=1; }
+          done
+          got=$("$DIST/fwimg-linux-amd64" --version)
+          [ "$got" = "fwimg $TAG" ] || { echo "::error::--version says '$got', want 'fwimg $TAG'"; bad=1; }
+          exit "$bad"
+      - name: Attest the binaries and the manifest
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            ${{ runner.temp }}/dist/fwimg-*
+            ${{ runner.temp }}/dist/SHA256SUMS
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -eu
+          DIST="$RUNNER_TEMP/dist"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DIST"/* --clobber
+          else
+            gh release create "$TAG" "$DIST"/* --title "$TAG" --notes "Static fwimg binaries (CGO_ENABLED=0). Verify against SHA256SUMS; each file carries a Sigstore provenance attestation (gh attestation verify -R go-binfmt/fwimg <file>)."
+          fi
