@@ -20,7 +20,6 @@
 package fwimg
 
 import (
-	"debug/elf"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -29,6 +28,19 @@ import (
 	"math"
 	"slices"
 	"sort"
+
+	"github.com/go-binfmt/elfpatch"
+)
+
+// ELF constants fwimg needs: the PT_LOAD segment type and the machines it
+// maps to a uImage architecture (e_machine values from the ELF gABI).
+const (
+	ptLoad      = 1
+	emARM       = 40
+	emX86_64    = 62
+	emAARCH64   = 183
+	emRISCV     = 243
+	emLoongArch = 258
 )
 
 // Refusals. Test with errors.Is.
@@ -79,7 +91,27 @@ type FlattenOptions struct {
 // It returns the image bytes and the base load address the image starts
 // at (the lowest segment address), so callers can feed SREC/IHEX/UImage.
 func Flatten(r io.ReaderAt, size int64, opts FlattenOptions) ([]byte, uint64, error) {
-	ef, err := elf.NewFile(r)
+	if size < 0 {
+		size = 0
+	}
+	if uint64(size) > math.MaxInt32 {
+		return nil, 0, fmt.Errorf("parse ELF: %w: input of %d bytes", ErrRange, size)
+	}
+	data := make([]byte, size)
+	if n, err := r.ReadAt(data, 0); err != nil && !(err == io.EOF && n == len(data)) {
+		return nil, 0, fmt.Errorf("read ELF: %w", err)
+	}
+	return FlattenBytes(data, opts)
+}
+
+// FlattenBytes is Flatten for an image already in memory (at most 2 GiB, the
+// bound elfpatch.Parse holds); the segments are copied out of data.
+func FlattenBytes(data []byte, opts FlattenOptions) ([]byte, uint64, error) {
+	size := int64(len(data))
+	ef, err := elfpatch.Parse(data)
+	if errors.Is(err, elfpatch.ErrSegmentRange) {
+		return nil, 0, fmt.Errorf("%w: %w", ErrRange, err)
+	}
 	if err != nil {
 		return nil, 0, fmt.Errorf("parse ELF: %w", err)
 	}
@@ -90,23 +122,21 @@ func Flatten(r io.ReaderAt, size int64, opts FlattenOptions) ([]byte, uint64, er
 	if limit > math.MaxInt {
 		limit = math.MaxInt
 	}
-	addr := func(p *elf.Prog) uint64 {
+	addr := func(p *elfpatch.Prog) uint64 {
 		if opts.UseVaddr {
 			return p.Vaddr
 		}
 		return p.Paddr
 	}
-	var loads []*elf.Prog
-	for _, p := range ef.Progs {
-		if p.Type == elf.PT_LOAD && p.Filesz > 0 {
+	var loads []*elfpatch.Prog
+	progs := ef.Progs()
+	for i := range progs {
+		if p := &progs[i]; p.Type == ptLoad && p.Filesz > 0 {
 			loads = append(loads, p)
 		}
 	}
 	if len(loads) == 0 {
 		return nil, 0, fmt.Errorf("no PT_LOAD segments with file content")
-	}
-	if size < 0 {
-		size = 0
 	}
 	for i, p := range loads {
 		// p.Off+p.Filesz must not wrap, and must end inside the input.
@@ -139,13 +169,9 @@ func Flatten(r io.ReaderAt, size int64, opts FlattenOptions) ([]byte, uint64, er
 			out[i] = opts.Pad
 		}
 	}
-	for i, p := range loads {
+	for _, p := range loads {
 		at := int(addr(p) - base)
-		dst := out[at : at+int(p.Filesz)]
-		n, err := r.ReadAt(dst, int64(p.Off))
-		if err != nil && !(err == io.EOF && n == len(dst)) {
-			return nil, 0, fmt.Errorf("read segment %d: %w", i, err)
-		}
+		copy(out[at:at+int(p.Filesz)], data[p.Off:p.Off+p.Filesz])
 	}
 	return out, base, nil
 }
@@ -370,17 +396,17 @@ func UImage(payload []byte, opts UImageOptions) ([]byte, error) {
 
 // ArchFromELF maps an ELF machine to the uImage architecture code, or 0
 // when the machine has none here.
-func ArchFromELF(m elf.Machine) byte {
+func ArchFromELF(m uint16) byte {
 	switch m {
-	case elf.EM_ARM:
+	case emARM:
 		return ArchARM
-	case elf.EM_AARCH64:
+	case emAARCH64:
 		return ArchARM64
-	case elf.EM_X86_64:
+	case emX86_64:
 		return ArchX86_64
-	case elf.EM_RISCV:
+	case emRISCV:
 		return ArchRISCV
-	case elf.EM_LOONGARCH:
+	case emLoongArch:
 		return ArchLoongArch
 	}
 	return 0

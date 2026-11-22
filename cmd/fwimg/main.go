@@ -4,14 +4,15 @@
 package main
 
 import (
-	"debug/elf"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"runtime/debug"
 	"strconv"
 
+	"github.com/go-binfmt/elfpatch"
 	"github.com/go-binfmt/fwimg"
 	"github.com/spf13/cobra"
 )
@@ -180,11 +181,15 @@ func run(o *options, input string) error {
 	if st.Size() > maxInput {
 		return fmt.Errorf("%s is %d bytes, above the %d byte input limit", input, st.Size(), maxInput)
 	}
-	ef, err := elf.NewFile(f)
+	data, err := io.ReadAll(io.LimitReader(f, maxInput+1))
 	if err != nil {
 		return fmt.Errorf("%s: %w", input, err)
 	}
-	flat, base, err := fwimg.Flatten(f, st.Size(), fo)
+	ef, err := elfpatch.Parse(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", input, err)
+	}
+	flat, base, err := fwimg.FlattenBytes(data, fo)
 	if err != nil {
 		return err
 	}

@@ -97,11 +97,32 @@ func (f failAt) ReadAt(p []byte, off int64) (int, error) {
 	return f.r.ReadAt(p, off)
 }
 
-func TestFlatten_SegmentReadError(t *testing.T) {
+func TestFlattenBytes_MatchesFlatten(t *testing.T) {
 	img := buildELF(elf.EM_AARCH64, []seg{{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")}})
-	r := failAt{r: bytes.NewReader(img), failOff: 0x200}
-	if _, _, err := Flatten(r, int64(len(img)), FlattenOptions{}); err == nil || !strings.Contains(err.Error(), "read segment") {
-		t.Fatalf("err = %v, want read-segment", err)
+	out, base, err := FlattenBytes(img, FlattenOptions{})
+	if err != nil || base != 0x1000 || string(out) != "AAAA" {
+		t.Fatalf("FlattenBytes = %q, 0x%x, %v", out, base, err)
+	}
+}
+
+func TestFlatten_RefusesInputOver2GiBBeforeReading(t *testing.T) {
+	// The reader would fail if it were read: nothing is allocated or read for
+	// a size the parser cannot hold.
+	r := failAt{r: bytes.NewReader(nil), failOff: 0}
+	_, _, err := Flatten(r, 1<<31, FlattenOptions{})
+	if !errors.Is(err, ErrRange) || strings.Contains(err.Error(), "synthetic") {
+		t.Fatalf("err = %v, want ErrRange without a read", err)
+	}
+	if _, _, err := Flatten(bytes.NewReader(nil), -5, FlattenOptions{}); err == nil {
+		t.Fatal("negative size accepted")
+	}
+}
+
+func TestFlatten_ReadError(t *testing.T) {
+	img := buildELF(elf.EM_AARCH64, []seg{{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")}})
+	r := failAt{r: bytes.NewReader(img), failOff: 0}
+	if _, _, err := Flatten(r, int64(len(img)), FlattenOptions{}); err == nil || !strings.Contains(err.Error(), "read ELF") {
+		t.Fatalf("err = %v, want read-ELF", err)
 	}
 }
 
@@ -631,7 +652,7 @@ func TestArchFromELF(t *testing.T) {
 		elf.EM_ARM: ArchARM, elf.EM_AARCH64: ArchARM64, elf.EM_X86_64: ArchX86_64,
 		elf.EM_RISCV: ArchRISCV, elf.EM_LOONGARCH: ArchLoongArch, elf.EM_MIPS: 0,
 	} {
-		if got := ArchFromELF(m); got != want {
+		if got := ArchFromELF(uint16(m)); got != want {
 			t.Errorf("ArchFromELF(%v) = %d, want %d", m, got, want)
 		}
 	}
