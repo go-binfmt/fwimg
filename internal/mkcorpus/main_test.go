@@ -50,8 +50,9 @@ func TestRunRefusals(t *testing.T) {
 		if err := os.WriteFile(file, nil, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := run(filepath.Join(file, "sub")); err == nil {
-			t.Fatal("a directory under a regular file was accepted")
+		// The refusal comes from MkdirAll, not from a later write.
+		if err := run(filepath.Join(file, "sub")); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+			t.Fatalf("err = %v, want a mkdir refusal", err)
 		}
 	})
 	t.Run("seed cannot be written", func(t *testing.T) {

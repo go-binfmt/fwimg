@@ -72,8 +72,8 @@ func TestRunRefusals(t *testing.T) {
 		return []fixture{{"fx", p}}, os.WriteFile(p, []byte("x"), 0o644)
 	}
 	var w bytes.Buffer
-	if err := run([]string{"-nonsense"}, &w, mk); err == nil {
-		t.Error("an unknown flag did not fail the run")
+	if err := run([]string{"-nonsense"}, &w, mk); err == nil || !strings.Contains(err.Error(), "nonsense") {
+		t.Errorf("an unknown flag: err = %v, want the flag package's refusal", err)
 	}
 	// fwimg failing to make the flat payload names the file.
 	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", fl, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "fwimg on fx") {
@@ -102,8 +102,9 @@ func TestFixturesRefusals(t *testing.T) {
 			if err := os.Mkdir(filepath.Join(dir, c.blocker), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := fixtures(dir); err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Fatalf("err = %v, want it to name %s", err, c.want)
+			// Refused at its own step, not by the compiler further on.
+			if _, err := fixtures(dir); err == nil || !strings.Contains(err.Error(), c.want) || strings.HasPrefix(err.Error(), "gcc:") {
+				t.Fatalf("err = %v, want it to name %s from the step itself", err, c.want)
 			}
 		})
 	}
