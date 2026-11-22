@@ -50,6 +50,11 @@ func TestRunRefusals(t *testing.T) {
 			t.Errorf("a silent command: %v", err)
 		}
 	}
+	t.Setenv(depthVar, "1")
+	if err := run([]string{"-rounds", "1"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "-once child") {
+		t.Errorf("a child driving rounds: %v", err)
+	}
+	t.Setenv(depthVar, "")
 	// -once through run prints one line per phase and stops there.
 	dir := t.TempDir()
 	in := filepath.Join(dir, "in.elf")

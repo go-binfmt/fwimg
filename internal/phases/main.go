@@ -44,6 +44,10 @@ func main() {
 }
 
 // phaseNames are the steps of once, in order; once prints one line for each.
+// depthVar marks a child process: a child never drives rounds itself, so a
+// broken -once switch fails at once instead of forking without end.
+const depthVar = "PHASES_CHILD"
+
 var phaseNames = []string{"read", "parse", "flatten", "write"}
 
 func run(args []string, w io.Writer, self string) error {
@@ -58,6 +62,9 @@ func run(args []string, w io.Writer, self string) error {
 	}
 	if *once {
 		return once1(w, *in, *out)
+	}
+	if os.Getenv(depthVar) != "" {
+		return errors.New("a -once child was asked to drive rounds")
 	}
 	if *rounds < 1 {
 		return errors.New("-rounds must be at least 1")
@@ -83,7 +90,9 @@ func run(args []string, w io.Writer, self string) error {
 		if fresh {
 			_ = os.Remove(output) // absent on the first round; a real failure shows in the write phase
 		}
-		b, err := exec.Command(self, "-once", "-in", input, "-out", output).CombinedOutput()
+		cmd := exec.Command(self, "-once", "-in", input, "-out", output)
+		cmd.Env = append(os.Environ(), depthVar+"=1")
+		b, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("%s -once: %v: %s", self, err, b)
 		}
