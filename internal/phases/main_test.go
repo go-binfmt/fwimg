@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,8 +41,24 @@ func TestRunRefusals(t *testing.T) {
 	if err := run([]string{"-rounds", "0"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "-rounds") {
 		t.Errorf("zero rounds: %v", err)
 	}
-	if err := run([]string{"-nonsense"}, &w, "x"); err == nil {
-		t.Error("an unknown flag was accepted")
+	if err := run([]string{"-nonsense"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "nonsense") {
+		t.Errorf("an unknown flag: %v", err)
+	}
+	// A command that exits 0 and prints nothing is a driver error, not a table.
+	if tr, e := exec.LookPath("true"); e == nil {
+		if err := run([]string{"-rounds", "1"}, &w, tr); err == nil || !strings.Contains(err.Error(), "phase lines") {
+			t.Errorf("a silent command: %v", err)
+		}
+	}
+	// -once through run prints one line per phase and stops there.
+	dir := t.TempDir()
+	in := filepath.Join(dir, "in.elf")
+	if err := os.WriteFile(in, fixture(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.Reset()
+	if err := run([]string{"-once", "-in", in, "-out", filepath.Join(dir, "o")}, &w, "x"); err != nil || strings.Count(w.String(), "\n") != len(phaseNames) {
+		t.Errorf("-once: %v, %q", err, w.String())
 	}
 	if err := run([]string{"-rounds", "1"}, &w, filepath.Join(t.TempDir(), "absent")); err == nil || !strings.Contains(err.Error(), "-once") {
 		t.Errorf("a missing command: %v", err)
@@ -69,7 +86,7 @@ func TestOnceRefusals(t *testing.T) {
 		{"no output directory", good, filepath.Join(dir, "none", "o"), "write"},
 	} {
 		var w bytes.Buffer
-		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) {
+		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name == "no input" && !strings.Contains(err.Error(), "none")) {
 			t.Errorf("%s: err = %v, want it to start with %q", c.name, err, c.want)
 		}
 	}

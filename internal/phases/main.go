@@ -68,9 +68,8 @@ func run(args []string, w io.Writer, self string) error {
 	}
 	defer os.RemoveAll(dir)
 	input := filepath.Join(dir, "in.elf")
-	if err := os.WriteFile(input, fixture(), 0o644); err != nil {
-		return err
-	}
+	// A failed write shows as the child's "read" error below.
+	_ = os.WriteFile(input, fixture(), 0o644)
 	output := filepath.Join(dir, "out.bin")
 
 	type key struct {
@@ -82,9 +81,7 @@ func run(args []string, w io.Writer, self string) error {
 	for r := 0; r < *rounds*2; r++ {
 		fresh := r%2 == 0
 		if fresh {
-			if err := os.Remove(output); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
+			_ = os.Remove(output) // absent on the first round; a real failure shows in the write phase
 		}
 		b, err := exec.Command(self, "-once", "-in", input, "-out", output).CombinedOutput()
 		if err != nil {
@@ -174,31 +171,32 @@ func once1(w io.Writer, in, out string) error {
 		fmt.Fprintf(w, "%s %d %d\n", name, d.Nanoseconds(), ms1.Mallocs-ms0.Mallocs)
 		return nil
 	}
-	if err = phase("read", func() error {
-		f, err := os.Open(in)
-		if err != nil {
+	steps := []struct {
+		name string
+		f    func() error
+	}{
+		{"read", func() error {
+			f, err := os.Open(in)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, _ = f.Stat() // fwimg stats the input before it reads
+			data, err = io.ReadAll(io.LimitReader(f, 1<<31))
+			return err
+		}},
+		{"parse", func() error { _, err := elfpatch.Parse(data); return err }},
+		{"flatten", func() error {
+			var err error
+			flat, _, err = fwimg.FlattenBytes(data, fwimg.FlattenOptions{})
+			return err
+		}},
+		{"write", func() error { return os.WriteFile(out, flat, 0o644) }},
+	}
+	for _, s := range steps {
+		if err = phase(s.name, s.f); err != nil {
 			return err
 		}
-		defer f.Close()
-		st, err := f.Stat()
-		if err != nil {
-			return err
-		}
-		_ = st.Size()
-		data, err = io.ReadAll(io.LimitReader(f, 1<<31))
-		return err
-	}); err != nil {
-		return err
 	}
-	if err = phase("parse", func() error { _, err := elfpatch.Parse(data); return err }); err != nil {
-		return err
-	}
-	if err = phase("flatten", func() error {
-		var err error
-		flat, _, err = fwimg.FlattenBytes(data, fwimg.FlattenOptions{})
-		return err
-	}); err != nil {
-		return err
-	}
-	return phase("write", func() error { return os.WriteFile(out, flat, 0o644) })
+	return nil
 }
