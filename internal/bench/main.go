@@ -148,9 +148,11 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 // before fwimg does any work: fwimg minus cobra-only, with the noise of that
 // paired difference (the median absolute deviation over the rounds).
 func floor(w io.Writer, t tools, hello, cobra, in, out string, rounds int) error {
+	// Each converter writes its own file: one shared name would hand the
+	// second a file the first had just written.
 	procs := [4][]string{
-		ops[0].ref(t, in, "", out),
-		append([]string{t.fwimg}, ops[0].ours(in, out)...),
+		ops[0].ref(t, in, "", out+".objcopy"),
+		append([]string{t.fwimg}, ops[0].ours(in, out+".fwimg")...),
 		{cobra},
 		{hello},
 	}
