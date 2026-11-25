@@ -61,6 +61,27 @@ var maxInput int64 = math.MaxInt32
 
 // statFile is replaceable in tests: an open descriptor's Stat does not fail on
 // demand.
+// readSized reads r to EOF into a buffer of the file's own length: one read
+// for the body and one for the EOF, where io.ReadAll starts at 512 bytes and
+// grows, which cost five read calls on a 1 KiB input (strace, CI). A file
+// that grew since the stat is still read in full, up to maxInput+1 bytes.
+func readSized(r io.Reader, size int64) ([]byte, error) {
+	lr := io.LimitReader(r, maxInput+1)
+	buf := make([]byte, size)
+	n, err := io.ReadFull(lr, buf)
+	switch err {
+	case nil: // the stated size was there; read whatever follows it
+		rest, err := io.ReadAll(lr)
+		if err != nil {
+			return nil, err
+		}
+		return append(buf, rest...), nil
+	case io.EOF, io.ErrUnexpectedEOF: // shorter than stated
+		return buf[:n], nil
+	}
+	return nil, err
+}
+
 var statFile = func(f *os.File) (os.FileInfo, error) { return f.Stat() }
 
 type options struct {
@@ -181,7 +202,7 @@ func run(o *options, input string) error {
 	if st.Size() > maxInput {
 		return fmt.Errorf("%s is %d bytes, above the %d byte input limit", input, st.Size(), maxInput)
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxInput+1))
+	data, err := readSized(f, st.Size())
 	if err != nil {
 		return fmt.Errorf("%s: %w", input, err)
 	}
