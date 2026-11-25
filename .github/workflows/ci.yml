@@ -132,15 +132,18 @@ jobs:
         with: { go-version: '1.27.4' }
       - run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq binutils strace
+          sudo apt-get install -y -qq gcc binutils strace
       - run: |
+          set -o pipefail
+          go build -o "$RUNNER_TEMP/bench" ./internal/bench
+          "$RUNNER_TEMP/bench" -write-small "$RUNNER_TEMP/in.elf"
           go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
           go build -o "$RUNNER_TEMP/hello" ./internal/floor/hello
           go build -o "$RUNNER_TEMP/cobraonly" ./internal/floor/cobraonly
           go build -tags floor_osio -o "$RUNNER_TEMP/v-osio" ./internal/floor/cobraonly
           go build -o "$RUNNER_TEMP/syscalls" ./internal/syscalls
           mkdir "$RUNNER_TEMP/tr"
-          "$RUNNER_TEMP/syscalls" -dir "$RUNNER_TEMP/tr" -fixture "$RUNNER_TEMP/in.elf" \
+          "$RUNNER_TEMP/syscalls" -dir "$RUNNER_TEMP/tr" \
             -cmd "objcopy=$(command -v objcopy) -O binary $RUNNER_TEMP/in.elf $RUNNER_TEMP/s1" \
             -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/s2 $RUNNER_TEMP/in.elf" \
             -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.elf $RUNNER_TEMP/s3" \
