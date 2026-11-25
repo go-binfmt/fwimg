@@ -58,6 +58,32 @@ func TestRunTable(t *testing.T) {
 	}
 }
 
+// -write-small leaves the first fixture at the path and runs no benchmark.
+func TestRunWriteSmall(t *testing.T) {
+	mk := func(dir string) ([]fixture, error) {
+		p := filepath.Join(dir, "x")
+		return []fixture{{"fx", p}, {"other", p + "-other"}}, os.WriteFile(p, []byte("first"), 0o644)
+	}
+	dst := filepath.Join(t.TempDir(), "small")
+	var w bytes.Buffer
+	if err := run([]string{"-write-small", dst}, &w, mk); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(dst); err != nil || string(b) != "first" {
+		t.Errorf("the small fixture: %q, %v", b, err)
+	}
+	if w.Len() != 0 {
+		t.Errorf("a benchmark ran: %q", w.String())
+	}
+	if err := run([]string{"-write-small", filepath.Join(t.TempDir(), "no", "x")}, &w, mk); err == nil {
+		t.Error("an unwritable destination was accepted")
+	}
+	gone := func(dir string) ([]fixture, error) { return []fixture{{"fx", filepath.Join(dir, "gone")}}, nil }
+	if err := run([]string{"-write-small", dst}, &w, gone); err == nil || !strings.Contains(err.Error(), "gone") {
+		t.Errorf("a missing fixture: %v", err)
+	}
+}
+
 func TestRunRefusals(t *testing.T) {
 	tr, err := exec.LookPath("true")
 	if err != nil {

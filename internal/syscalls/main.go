@@ -8,8 +8,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
-	"debug/elf"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,8 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/go-binfmt/fwimg/internal/elfgen"
 )
 
 type stat struct {
@@ -104,18 +100,12 @@ func run(args []string, w io.Writer) error {
 	fs.Var(&cmds, "cmd", "label=program args; repeatable")
 	strace := fs.String("strace", "strace", "the strace program")
 	dir := fs.String("dir", "", "keep each raw trace here as <label>.trace (default: a scratch directory, removed)")
-	fixture := fs.String("fixture", "", "first write the 1 KiB two-segment ELF the benchmarks use to this path")
 	raw := fs.Bool("raw", false, "also print each raw trace")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if len(cmds) < 2 {
 		return errors.New("need at least two -cmd to compare")
-	}
-	if *fixture != "" {
-		if err := os.WriteFile(*fixture, fixtureELF(), 0o644); err != nil {
-			return err
-		}
 	}
 	if *dir == "" {
 		d, err := os.MkdirTemp("", "fwimg-strace-")
@@ -222,15 +212,6 @@ func table(w io.Writer, labels []string, traces []trace) {
 	if !any {
 		fmt.Fprintln(w, "- none")
 	}
-}
-
-// fixtureELF is the 1 KiB image in two PT_LOAD segments with a gap that the
-// phases command and the bench fixtures use.
-func fixtureELF() []byte {
-	return elfgen.Build(elf.EM_AARCH64, 0x80000, []elfgen.Seg{
-		{Paddr: 0x80000, Vaddr: 0x80000, Off: 0x400, Filesz: 512, Memsz: 512, Data: bytes.Repeat([]byte{1}, 512)},
-		{Paddr: 0x90000, Vaddr: 0x90000, Off: 0x600, Filesz: 512, Memsz: 512, Data: bytes.Repeat([]byte{2}, 512)},
-	})
 }
 
 func cell(s stat) string {
