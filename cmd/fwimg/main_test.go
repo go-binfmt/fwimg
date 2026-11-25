@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"debug/elf"
 	"encoding/binary"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -177,6 +179,68 @@ func TestInputLimitAndStatFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(out); err == nil {
 		t.Errorf("a refused run wrote %s", out)
+	}
+}
+
+// countReader counts Read calls: the sized read exists to make two of them on
+// a file of the stated size, where io.ReadAll made five on 1 KiB.
+type countReader struct {
+	r     io.Reader
+	calls int
+	err   error
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	c.calls++
+	if c.err != nil {
+		return 0, c.err
+	}
+	return c.r.Read(p)
+}
+
+func TestReadSized(t *testing.T) {
+	data := bytes.Repeat([]byte("xyz"), 700) // 2100 bytes
+	for _, tc := range []struct {
+		name  string
+		size  int64
+		calls int
+	}{
+		{"exact", int64(len(data)), 2},
+		{"stat too small", 10, 0}, // the file grew: still read in full
+		{"stat too large", int64(len(data)) + 4096, 2},
+		{"zero", 0, 0},
+	} {
+		cr := &countReader{r: bytes.NewReader(data)}
+		got, err := readSized(cr, tc.size)
+		if err != nil || !bytes.Equal(got, data) {
+			t.Fatalf("%s: %d bytes, err %v", tc.name, len(got), err)
+		}
+		if tc.calls != 0 && cr.calls != tc.calls {
+			t.Errorf("%s: %d reads, want %d", tc.name, cr.calls, tc.calls)
+		}
+	}
+	sentinel := errors.New("boom")
+	if _, err := readSized(&countReader{err: sentinel}, 8); !errors.Is(err, sentinel) {
+		t.Errorf("read error: %v", err)
+	}
+	// The same failure after the stated size has been read.
+	tail := io.MultiReader(bytes.NewReader(data), &countReader{err: sentinel})
+	if _, err := readSized(tail, int64(len(data))); !errors.Is(err, sentinel) {
+		t.Errorf("read error after the body: %v", err)
+	}
+	// A directory opens and stats but cannot be read: the error names it.
+	dir := t.TempDir()
+	if _, _, err := runCmd(t, "-o", filepath.Join(t.TempDir(), "never"), dir); err == nil || !strings.Contains(err.Error(), dir+": ") || !strings.Contains(err.Error(), "directory") {
+		t.Errorf("a directory as input: err = %v", err)
+	}
+	// Past the limit the read stops at maxInput+1 bytes, which the caller's
+	// stat check has already refused for a file of that size.
+	old := maxInput
+	defer func() { maxInput = old }()
+	maxInput = 100
+	got, err := readSized(bytes.NewReader(data), 5)
+	if err != nil || len(got) != 101 {
+		t.Errorf("limit: %d bytes, err %v", len(got), err)
 	}
 }
 
