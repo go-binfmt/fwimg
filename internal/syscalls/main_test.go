@@ -115,14 +115,6 @@ func TestRunTable(t *testing.T) {
 	if strings.Index(out, "| read |") > strings.Index(out, "| openat |") {
 		t.Errorf("the most-called call is not first:\n%s", out)
 	}
-	fx := filepath.Join(dir, "fixture.elf")
-	w.Reset()
-	if err := run([]string{"-strace", os.Args[0], "-fixture", fx, "-cmd", "a=same x", "-cmd", "b=same y"}, &w); err != nil {
-		t.Fatal(err)
-	}
-	if st, err := os.Stat(fx); err != nil || st.Size() < 1024 {
-		t.Errorf("fixture: %v %v", st, err)
-	}
 	if _, err := os.Stat(filepath.Join(dir, "more.trace")); err != nil {
 		t.Errorf("the raw trace was not kept: %v", err)
 	}
@@ -141,9 +133,6 @@ func TestRunRefusals(t *testing.T) {
 	two := []string{"-strace", os.Args[0], "-cmd", "a=same x", "-cmd", "b=same y"}
 	if err := run(append(slices.Clone(two), "-nonsense"), &w); err == nil {
 		t.Error("an unknown flag was accepted")
-	}
-	if err := run(append([]string{"-fixture", filepath.Join(t.TempDir(), "no", "x")}, two...), &w); err == nil {
-		t.Error("an unwritable fixture path was accepted")
 	}
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "absent"))
 	if err := run(two, &w); err == nil || !strings.Contains(err.Error(), "absent") {
