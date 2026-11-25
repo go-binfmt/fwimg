@@ -120,6 +120,35 @@ jobs:
         with: { go-version: '1.27.4' }
       - run: go test -count=1 ./...
 
+  # The system calls behind the start-up gap (go-binfmt/fwimg#2): the same 1 KiB
+  # input through objcopy, fwimg, a do-nothing cobra root and the same root with
+  # os read and write, each writing to its own fresh file. internal/syscalls
+  # runs strace and computes the diff; the raw traces go to the job log.
+  strace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq binutils strace
+      - run: |
+          go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
+          go build -o "$RUNNER_TEMP/hello" ./internal/floor/hello
+          go build -o "$RUNNER_TEMP/cobraonly" ./internal/floor/cobraonly
+          go build -tags floor_osio -o "$RUNNER_TEMP/v-osio" ./internal/floor/cobraonly
+          go build -o "$RUNNER_TEMP/syscalls" ./internal/syscalls
+          mkdir "$RUNNER_TEMP/tr"
+          "$RUNNER_TEMP/syscalls" -dir "$RUNNER_TEMP/tr" -fixture "$RUNNER_TEMP/in.elf" \
+            -cmd "objcopy=$(command -v objcopy) -O binary $RUNNER_TEMP/in.elf $RUNNER_TEMP/s1" \
+            -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/s2 $RUNNER_TEMP/in.elf" \
+            -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.elf $RUNNER_TEMP/s3" \
+            -cmd "cobra-only+os-io=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.elf $RUNNER_TEMP/s4" \
+            -cmd "hello=$RUNNER_TEMP/hello" | tee "$RUNNER_TEMP/syscalls.md"
+          cat "$RUNNER_TEMP/syscalls.md" >> "$GITHUB_STEP_SUMMARY"
+          for f in "$RUNNER_TEMP"/tr/*.trace; do echo "=== $f"; cat "$f"; done
+
   # Single core, interleaved rounds, against the same objcopy and mkimage the
   # differential lane uses. The table is printed into the job summary; README
   # quotes it.
