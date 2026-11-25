@@ -75,7 +75,8 @@ func run(args []string, w io.Writer) error {
 		return err
 	}
 	wall := make([][]time.Duration, len(cmds))
-	flt := make([][]int64, len(cmds))
+	minor := make([][]int64, len(cmds))
+	major := make([][]int64, len(cmds))
 	for r := 0; r < *rounds; r++ {
 		for k := range cmds {
 			i := (k + r) % len(cmds)
@@ -84,31 +85,53 @@ func run(args []string, w io.Writer) error {
 				return fmt.Errorf("%s: %w", cmds[i].label, err)
 			}
 			wall[i] = append(wall[i], d)
-			flt[i] = append(flt[i], f)
+			minor[i] = append(minor[i], f.minor)
+			major[i] = append(major[i], f.major)
 		}
 	}
-	fmt.Fprintf(w, "rounds: %d; wall time per process, interleaved\n\n", *rounds)
-	fmt.Fprintln(w, "| command | median | min | minor faults |")
-	fmt.Fprintln(w, "|---|---:|---:|---:|")
+	fmt.Fprintf(w, "rounds: %d; wall time per process, interleaved; faults are getrusage of the child\n\n", *rounds)
+	fmt.Fprintln(w, "| command | binary | median | min | minor faults | major faults |")
+	fmt.Fprintln(w, "|---|---:|---:|---:|---:|---:|")
 	for i, c := range cmds {
 		slices.Sort(wall[i])
-		slices.Sort(flt[i])
-		fmt.Fprintf(w, "| %s | %s | %s | %d |\n", c.label,
+		slices.Sort(minor[i])
+		slices.Sort(major[i])
+		fmt.Fprintf(w, "| %s | %s | %s | %s | %d | %d |\n", c.label, binarySize(c.argv[0]),
 			wall[i][len(wall[i])/2].Round(10*time.Microsecond),
-			wall[i][0].Round(10*time.Microsecond), flt[i][len(flt[i])/2])
+			wall[i][0].Round(10*time.Microsecond), minor[i][len(minor[i])/2], major[i][len(major[i])/2])
 	}
 	return nil
 }
 
-// timeOne runs argv to completion and returns its wall time and its minor
-// page faults.
-func timeOne(argv []string) (time.Duration, int64, error) {
+// faultCount is the page faults of one finished process.
+type faultCount struct{ minor, major int64 }
+
+// binarySize is the size of the program a command runs, found on PATH when it
+// has no directory, or "?" when it cannot be found.
+func binarySize(prog string) string {
+	path := prog
+	if !strings.Contains(prog, "/") {
+		if p, err := exec.LookPath(prog); err == nil {
+			path = p
+		}
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		return "?"
+	}
+	return fmt.Sprintf("%d KiB", (st.Size()+512)/1024)
+}
+
+// timeOne runs argv to completion and returns its wall time and its page
+// faults.
+func timeOne(argv []string) (time.Duration, faultCount, error) {
 	c := exec.Command(argv[0], argv[1:]...)
 	start := time.Now()
 	out, err := c.CombinedOutput()
 	d := time.Since(start)
 	if err != nil {
-		return 0, 0, fmt.Errorf("%v: %s", err, out)
+		return 0, faultCount{}, fmt.Errorf("%v: %s", err, out)
 	}
-	return d, minorFaults(c.ProcessState), nil
+	minor, major := faults(c.ProcessState)
+	return d, faultCount{minor, major}, nil
 }

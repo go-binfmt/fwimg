@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,6 +46,38 @@ func TestRun(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("run(%q) = %v, want an error containing %q", c.args, err, c.want)
 		}
+	}
+}
+
+func TestBinarySize(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "prog")
+	if err := os.WriteFile(p, make([]byte, 3*1024+600), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := binarySize(p); got != "4 KiB" { // 3.59 KiB rounds to 4
+		t.Errorf("binarySize = %q, want 4 KiB", got)
+	}
+	if got := binarySize(filepath.Join(dir, "none")); got != "?" {
+		t.Errorf("a missing program = %q, want ?", got)
+	}
+	if got := binarySize("no-such-program-anywhere"); got != "?" {
+		t.Errorf("a name not on PATH = %q, want ?", got)
+	}
+	t.Setenv("PATH", dir)
+	if got := binarySize("prog"); got != "4 KiB" {
+		t.Errorf("a name on PATH = %q, want 4 KiB", got)
+	}
+}
+
+// The table carries the binary size and both fault columns.
+func TestRunColumns(t *testing.T) {
+	var w bytes.Buffer
+	if err := run([]string{"-rounds", "1", "-cmd", "t=true"}, &w); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(w.String(), "| command | binary | median | min | minor faults | major faults |") {
+		t.Errorf("header missing:\n%s", w.String())
 	}
 }
 

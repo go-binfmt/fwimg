@@ -143,11 +143,13 @@ jobs:
           go build -tags floor_osio -o "$RUNNER_TEMP/v-osio" ./internal/floor/cobraonly
           go build -o "$RUNNER_TEMP/syscalls" ./internal/syscalls
           mkdir "$RUNNER_TEMP/tr"
+          "$RUNNER_TEMP/fwimg" -O binary -o "$RUNNER_TEMP/expect" "$RUNNER_TEMP/in.elf"
+          N=$(stat -c %s "$RUNNER_TEMP/expect")
           "$RUNNER_TEMP/syscalls" -dir "$RUNNER_TEMP/tr" \
             -cmd "objcopy=$(command -v objcopy) -O binary $RUNNER_TEMP/in.elf $RUNNER_TEMP/s1" \
             -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/s2 $RUNNER_TEMP/in.elf" \
             -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.elf $RUNNER_TEMP/s3" \
-            -cmd "cobra-only+os-io=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.elf $RUNNER_TEMP/s4" \
+            -cmd "cobra-only+os-io=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.elf $RUNNER_TEMP/s4 $N" \
             -cmd "hello=$RUNNER_TEMP/hello" | tee "$RUNNER_TEMP/syscalls.md"
           cat "$RUNNER_TEMP/syscalls.md" >> "$GITHUB_STEP_SUMMARY"
           for f in "$RUNNER_TEMP"/tr/*.trace; do echo "=== $f"; cat "$f"; done
@@ -180,21 +182,33 @@ jobs:
           go build -o "$RUNNER_TEMP/startup" ./internal/startup
           go build -tags floor_osio -o "$RUNNER_TEMP/v-osio" ./internal/floor/cobraonly
           go build -tags floor_sysio -o "$RUNNER_TEMP/v-sysio" ./internal/floor/cobraonly
+          go build -tags floor_osread -o "$RUNNER_TEMP/v-osread" ./internal/floor/cobraonly
+          go build -tags floor_oswrite -o "$RUNNER_TEMP/v-oswrite" ./internal/floor/cobraonly
+          go build -tags floor_osio,floor_parse -o "$RUNNER_TEMP/v-osparse" ./internal/floor/cobraonly
+          go build -tags floor_osio,floor_flatten -o "$RUNNER_TEMP/v-osflat" ./internal/floor/cobraonly
           go build -tags floor_crc32 -o "$RUNNER_TEMP/v-crc32" ./internal/floor/cobraonly
           go build -tags floor_binary -o "$RUNNER_TEMP/v-binary" ./internal/floor/cobraonly
           go build -tags floor_debug -o "$RUNNER_TEMP/v-debug" ./internal/floor/cobraonly
           go build -tags floor_elfpatch -o "$RUNNER_TEMP/v-elfpatch" ./internal/floor/cobraonly
           go build -tags floor_fwimg -o "$RUNNER_TEMP/v-fwimglib" ./internal/floor/cobraonly
-          head -c 1024 /dev/zero > "$RUNNER_TEMP/in.dat"
+          # The same input fwimg reads, and the size of the output it writes.
+          "$RUNNER_TEMP/bench" -write-small "$RUNNER_TEMP/in.elf"
+          "$RUNNER_TEMP/fwimg" -O binary -o "$RUNNER_TEMP/expect" "$RUNNER_TEMP/in.elf"
+          N=$(stat -c %s "$RUNNER_TEMP/expect")
           taskset -c 0 "$RUNNER_TEMP/phases" -rounds 100 | tee "$RUNNER_TEMP/phases.md"
           taskset -c 0 "$RUNNER_TEMP/startup" -rounds 400 \
-            -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.dat $RUNNER_TEMP/o1" \
-            -cmd "+ os read and write=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.dat $RUNNER_TEMP/o2" \
-            -cmd "+ syscall read and write=$RUNNER_TEMP/v-sysio $RUNNER_TEMP/in.dat $RUNNER_TEMP/o3" \
-            -cmd "+ import hash/crc32=$RUNNER_TEMP/v-crc32 $RUNNER_TEMP/in.dat $RUNNER_TEMP/o4" \
-            -cmd "+ import encoding/binary=$RUNNER_TEMP/v-binary $RUNNER_TEMP/in.dat $RUNNER_TEMP/o5" \
-            -cmd "+ import runtime/debug=$RUNNER_TEMP/v-debug $RUNNER_TEMP/in.dat $RUNNER_TEMP/o6" \
-            -cmd "+ import elfpatch=$RUNNER_TEMP/v-elfpatch $RUNNER_TEMP/in.dat $RUNNER_TEMP/o7" \
-            -cmd "+ import fwimg library=$RUNNER_TEMP/v-fwimglib $RUNNER_TEMP/in.dat $RUNNER_TEMP/o8" \
+            -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/o0 $RUNNER_TEMP/in.elf" \
+            -cmd "cobra-only=$RUNNER_TEMP/cobraonly $RUNNER_TEMP/in.elf $RUNNER_TEMP/o1 $N" \
+            -cmd "+ os read only=$RUNNER_TEMP/v-osread $RUNNER_TEMP/in.elf $RUNNER_TEMP/o2 $N" \
+            -cmd "+ os write only=$RUNNER_TEMP/v-oswrite $RUNNER_TEMP/in.elf $RUNNER_TEMP/o3 $N" \
+            -cmd "+ os read and write=$RUNNER_TEMP/v-osio $RUNNER_TEMP/in.elf $RUNNER_TEMP/o4 $N" \
+            -cmd "+ syscall read and write=$RUNNER_TEMP/v-sysio $RUNNER_TEMP/in.elf $RUNNER_TEMP/o5 $N" \
+            -cmd "+ os read and write, one elfpatch Parse=$RUNNER_TEMP/v-osparse $RUNNER_TEMP/in.elf $RUNNER_TEMP/o6 $N" \
+            -cmd "+ os read and write, one Flatten=$RUNNER_TEMP/v-osflat $RUNNER_TEMP/in.elf $RUNNER_TEMP/o7" \
+            -cmd "+ import hash/crc32=$RUNNER_TEMP/v-crc32 $RUNNER_TEMP/in.elf $RUNNER_TEMP/o8 $N" \
+            -cmd "+ import encoding/binary=$RUNNER_TEMP/v-binary $RUNNER_TEMP/in.elf $RUNNER_TEMP/o9 $N" \
+            -cmd "+ import runtime/debug=$RUNNER_TEMP/v-debug $RUNNER_TEMP/in.elf $RUNNER_TEMP/o10 $N" \
+            -cmd "+ import elfpatch=$RUNNER_TEMP/v-elfpatch $RUNNER_TEMP/in.elf $RUNNER_TEMP/o11 $N" \
+            -cmd "+ import fwimg library=$RUNNER_TEMP/v-fwimglib $RUNNER_TEMP/in.elf $RUNNER_TEMP/o12 $N" \
             -cmd "hello=$RUNNER_TEMP/hello" | tee "$RUNNER_TEMP/ablation.md"
           { echo; cat "$RUNNER_TEMP/phases.md"; echo; cat "$RUNNER_TEMP/ablation.md"; } >> "$GITHUB_STEP_SUMMARY"
