@@ -57,10 +57,7 @@ func parse(r io.Reader) (trace, error) {
 		name := m[1] + m[2]
 		var d time.Duration
 		if dm := durRE.FindStringSubmatch(line); dm != nil {
-			f, err := strconv.ParseFloat(dm[1], 64)
-			if err != nil {
-				return nil, err
-			}
+			f, _ := strconv.ParseFloat(dm[1], 64) // the pattern admits digits and one point only
 			d = time.Duration(f * float64(time.Second))
 		}
 		s := t[name]

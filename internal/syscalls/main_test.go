@@ -75,6 +75,9 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		body := sample
+		if a[5] == "long" {
+			body += strings.Repeat("x", 2<<20) + "\n"
+		}
 		if a[5] == "other" {
 			body += "101  12:00:00.002000 fsync(3) = 0 <0.000300>\n"
 		}
@@ -133,10 +136,22 @@ func TestRunRefusals(t *testing.T) {
 	if err := run([]string{"-cmd", "a=x"}, &w); err == nil || !strings.Contains(err.Error(), "two") {
 		t.Errorf("one command: %v", err)
 	}
-	if err := run([]string{"-nonsense"}, &w); err == nil {
+	t.Setenv("SYSCALLS_AS_STRACE", "1")
+	two := []string{"-strace", os.Args[0], "-cmd", "a=same x", "-cmd", "b=same y"}
+	if err := run(append([]string{"-nonsense"}, two...), &w); err == nil {
 		t.Error("an unknown flag was accepted")
 	}
-	t.Setenv("SYSCALLS_AS_STRACE", "1")
+	if err := run(append([]string{"-fixture", filepath.Join(t.TempDir(), "no", "x")}, two...), &w); err == nil {
+		t.Error("an unwritable fixture path was accepted")
+	}
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "absent"))
+	if err := run(two, &w); err == nil || !strings.Contains(err.Error(), "absent") {
+		t.Errorf("no scratch directory: %v", err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	if err := run([]string{"-strace", os.Args[0], "-cmd", "a=same x", "-cmd", "b=long"}, &w); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("a trace line over the scanner's limit: %v", err)
+	}
 	if err := run([]string{"-strace", os.Args[0], "-cmd", "a=same x", "-cmd", "b=bad"}, &w); err == nil || !strings.Contains(err.Error(), "no such program") || !strings.Contains(err.Error(), "b:") {
 		t.Errorf("a failing strace: %v", err)
 	}
@@ -144,14 +159,7 @@ func TestRunRefusals(t *testing.T) {
 		t.Error("a missing strace was accepted")
 	}
 	// strace that succeeds but leaves no trace file.
-	if err := run([]string{"-strace", "true", "-cmd", "a=x", "-cmd", "b=y"}, &w); err == nil {
-		t.Error("a missing trace file was accepted")
-	}
-	if err := run([]string{"-fixture", filepath.Join(t.TempDir(), "no", "x"), "-cmd", "a=x", "-cmd", "b=y"}, &w); err == nil {
-		t.Error("an unwritable fixture path was accepted")
-	}
-	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "absent"))
-	if err := run([]string{"-cmd", "a=x", "-cmd", "b=y"}, &w); err == nil {
-		t.Error("no scratch directory was accepted")
+	if err := run([]string{"-strace", "true", "-cmd", "a=x", "-cmd", "b=y"}, &w); err == nil || !strings.Contains(err.Error(), "a.trace") {
+		t.Errorf("a missing trace file: %v", err)
 	}
 }
