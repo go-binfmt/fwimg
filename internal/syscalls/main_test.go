@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,7 +139,7 @@ func TestRunRefusals(t *testing.T) {
 	}
 	t.Setenv("SYSCALLS_AS_STRACE", "1")
 	two := []string{"-strace", os.Args[0], "-cmd", "a=same x", "-cmd", "b=same y"}
-	if err := run(append([]string{"-nonsense"}, two...), &w); err == nil {
+	if err := run(append(slices.Clone(two), "-nonsense"), &w); err == nil {
 		t.Error("an unknown flag was accepted")
 	}
 	if err := run(append([]string{"-fixture", filepath.Join(t.TempDir(), "no", "x")}, two...), &w); err == nil {
