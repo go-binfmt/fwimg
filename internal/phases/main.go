@@ -48,7 +48,7 @@ func main() {
 // broken -once switch fails at once instead of forking without end.
 const depthVar = "PHASES_CHILD"
 
-var phaseNames = []string{"read", "parse", "flatten", "write"}
+var phaseNames = []string{"read", "parse", "view", "write"}
 
 func run(args []string, w io.Writer, self string) error {
 	fs := flag.NewFlagSet("phases", flag.ContinueOnError)
@@ -175,7 +175,8 @@ func fixture() []byte {
 // the nanoseconds it took and the allocations it made.
 func once1(w io.Writer, in, out string) error {
 	var ms0, ms1 runtime.MemStats
-	var data, flat []byte
+	var data []byte
+	var im *fwimg.Image
 	var err error
 	phase := func(name string, f func() error) error {
 		runtime.ReadMemStats(&ms0)
@@ -201,12 +202,25 @@ func once1(w io.Writer, in, out string) error {
 			return err
 		}},
 		{"parse", func() error { _, err := elfpatch.Parse(data); return err }},
-		{"flatten", func() error {
+		{"view", func() error {
 			var err error
-			flat, _, err = fwimg.FlattenBytes(data, fwimg.FlattenOptions{})
+			im, err = fwimg.ELFImageView(data, fwimg.FlattenOptions{})
 			return err
 		}},
-		{"write", func() error { return os.WriteFile(out, flat, 0o644) }},
+		// As the command does: an existing output is unlinked, then the segments
+		// are written from the read, with no assembled image.
+		{"write", func() error {
+			if _, err := im.CheckFlat(0); err != nil {
+				return err
+			}
+			_ = os.Remove(out)
+			f, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+			if err != nil {
+				return err
+			}
+			_, err = im.WriteFlat(f, 0, 0)
+			return errors.Join(err, f.Close())
+		}},
 	}
 	for _, s := range steps {
 		if err = phase(s.name, s.f); err != nil {

@@ -1,7 +1,10 @@
 package fwimg
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 )
@@ -65,19 +68,9 @@ func (im *Image) Span() uint64 {
 // ErrTooLarge before anything is allocated. An image of one segment is
 // returned without a copy.
 func (im *Image) Flat(pad byte, maxSize uint64) ([]byte, uint64, error) {
-	if len(im.Segments) == 0 {
-		return nil, 0, nil
-	}
-	limit := maxSize
-	if limit == 0 {
-		limit = DefaultMaxSize
-	}
-	if limit > math.MaxInt {
-		limit = math.MaxInt
-	}
-	base := im.Base()
-	if span := im.Span(); span > limit {
-		return nil, 0, fmt.Errorf("%w: 0x%x..0x%x is %d bytes, limit %d", ErrTooLarge, base, base+span, span, limit)
+	base, err := im.CheckFlat(maxSize)
+	if err != nil || len(im.Segments) == 0 {
+		return nil, 0, err
 	}
 	if len(im.Segments) == 1 {
 		return im.Segments[0].Data, base, nil
@@ -92,6 +85,68 @@ func (im *Image) Flat(pad byte, maxSize uint64) ([]byte, uint64, error) {
 		copy(out[s.Addr-base:], s.Data)
 	}
 	return out, base, nil
+}
+
+// CheckFlat is the size check Flat and WriteFlat make before they do anything:
+// it returns the base address, or ErrTooLarge when the span passes maxSize (0
+// means DefaultMaxSize). A command that creates its output file calls it first,
+// so that a refusal leaves no file behind.
+func (im *Image) CheckFlat(maxSize uint64) (uint64, error) {
+	if len(im.Segments) == 0 {
+		return 0, nil
+	}
+	limit := maxSize
+	if limit == 0 {
+		limit = DefaultMaxSize
+	}
+	if limit > math.MaxInt {
+		limit = math.MaxInt
+	}
+	base := im.Base()
+	if span := im.Span(); span > limit {
+		return 0, fmt.Errorf("%w: 0x%x..0x%x is %d bytes, limit %d", ErrTooLarge, base, base+span, span, limit)
+	}
+	return base, nil
+}
+
+// flatChunk is the buffer WriteFlat coalesces small pieces in; a piece at least
+// that long goes to the writer as it is.
+const flatChunk = 64 << 10
+
+// WriteFlat writes what Flat would return to w without building it: each
+// segment goes to w straight from its own bytes, and a gap is written from one
+// small block of pad. No copy of the image is made, and a flat binary of
+// several segments costs the writer one pass instead of an assembled buffer
+// plus one. It makes the CheckFlat refusal itself.
+func (im *Image) WriteFlat(w io.Writer, pad byte, maxSize uint64) (uint64, error) {
+	base, err := im.CheckFlat(maxSize)
+	if err != nil || len(im.Segments) == 0 {
+		return 0, err
+	}
+	if len(im.Segments) == 1 {
+		_, err := w.Write(im.Segments[0].Data)
+		return base, err
+	}
+	bw := bufio.NewWriterSize(w, int(min(im.Span(), flatChunk)))
+	var fill []byte // the gap block, made when the first gap needs it
+	at := base
+	for _, s := range im.Segments {
+		for gap := s.Addr - at; gap > 0; {
+			if fill == nil {
+				fill = bytes.Repeat([]byte{pad}, int(min(im.Span(), flatChunk)))
+			}
+			n := int(min(gap, uint64(len(fill))))
+			if _, err := bw.Write(fill[:n]); err != nil {
+				return 0, err
+			}
+			gap -= uint64(n)
+		}
+		if _, err := bw.Write(s.Data); err != nil {
+			return 0, err
+		}
+		at = s.End()
+	}
+	return base, bw.Flush()
 }
 
 // Shift moves every segment so that the lowest byte is at base; the entry

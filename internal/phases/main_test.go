@@ -120,12 +120,12 @@ func TestOnceRefusals(t *testing.T) {
 }
 
 func TestParseLines(t *testing.T) {
-	ok := "read 1000 3\nparse 2000 4\nflatten 3000 5\nwrite 4000 6\n"
+	ok := "read 1000 3\nparse 2000 4\nview 3000 5\nwrite 4000 6\n"
 	got, err := parseLines(ok)
 	if err != nil || got[1].d != 2*time.Microsecond || got[2].allocs != 5 || got[3].phase != "write" {
 		t.Errorf("got %+v, %v", got, err)
 	}
-	for _, bad := range []string{"read 1\n", "read x 3\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1 y\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1000 3\n", ""} {
+	for _, bad := range []string{"read 1\n", "read x 3\nparse 1 1\nview 1 1\nwrite 1 1\n", "read 1 y\nparse 1 1\nview 1 1\nwrite 1 1\n", "read 1000 3\n", ""} {
 		if _, err := parseLines(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}

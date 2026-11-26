@@ -303,3 +303,63 @@ func TestMainExitCodes(t *testing.T) {
 		}
 	}
 }
+
+// An existing output is replaced by a new file of the same permission bits
+// (objcopy unlinks it too: truncating it in place makes ext4 write it all out
+// at close, go-binfmt/fwimg#17); a file that cannot be unlinked is truncated.
+func TestWriteOutputReplacesExisting(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "k.img")
+	if err := os.WriteFile(out, bytes.Repeat([]byte("x"), 100), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.Stat(out)
+	if _, _, err := runCmd(t, "-o", out, simple(t)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "ABCD" {
+		t.Errorf("image = %q", b)
+	}
+	if after.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, want the old 0600 kept", after.Mode().Perm())
+	}
+	if os.SameFile(before, after) {
+		t.Error("the existing file was truncated in place, want it unlinked and created again")
+	}
+
+	// An unlink that is refused falls back to truncating the file.
+	removeFile = func(string) error { return errors.New("refused") }
+	defer func() { removeFile = os.Remove }()
+	if err := os.WriteFile(out, bytes.Repeat([]byte("y"), 100), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, _ = os.Stat(out)
+	if _, _, err := runCmd(t, "-o", out, simple(t)); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = os.Stat(out)
+	if b, _ := os.ReadFile(out); string(b) != "ABCD" || !os.SameFile(before, after) {
+		t.Errorf("image = %q, same file %v", b, os.SameFile(before, after))
+	}
+}
+
+func TestWriteOutputRefusals(t *testing.T) {
+	in := simple(t)
+	if _, _, err := runCmd(t, "-o", filepath.Join(t.TempDir(), "none", "k.img"), in); err == nil {
+		t.Error("an output in a directory that does not exist was accepted")
+	}
+	// A refused size leaves no output file behind, nor touches an existing one.
+	out := filepath.Join(t.TempDir(), "k.img")
+	if err := os.WriteFile(out, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCmd(t, "-O", "binary", "--max-size", "2", "-o", out, in); !errors.Is(err, fwimg.ErrTooLarge) {
+		t.Errorf("err = %v, want ErrTooLarge", err)
+	}
+	if b, _ := os.ReadFile(out); string(b) != "keep" {
+		t.Errorf("a refused image replaced the output: %q", b)
+	}
+}

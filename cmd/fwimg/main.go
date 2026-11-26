@@ -433,9 +433,13 @@ func run(o *options, input string) error {
 	}
 
 	var out []byte
+	var emit func(io.Writer) error // set when the output is streamed, not built
 	switch o.format {
 	case "binary":
-		out, _, err = im.Flat(fo.Pad, fo.MaxSize)
+		// The refusal comes before the output file is touched; the segments are
+		// then written from the input's own bytes, with no assembled image.
+		_, err = im.CheckFlat(fo.MaxSize)
+		emit = func(w io.Writer) error { _, err := im.WriteFlat(w, fo.Pad, fo.MaxSize); return err }
 	case "srec", "ihex":
 		// Addresses come from the input, which may be 64-bit: one that does
 		// not fit the format's 32 bits is refused, not truncated.
@@ -459,7 +463,39 @@ func run(o *options, input string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(o.output, out, 0o644)
+	if emit == nil {
+		emit = func(w io.Writer) error { _, err := w.Write(out); return err }
+	}
+	return writeOutput(o.output, emit)
+}
+
+// removeFile is replaceable in tests: a refused unlink cannot be provoked as
+// root.
+var removeFile = os.Remove
+
+// writeOutput creates path and fills it. An existing regular file is unlinked
+// first, as objcopy does, and its permission bits are kept: truncating it in
+// place makes ext4 write the whole file out at close (auto_da_alloc), which
+// took 90 ms for 32 MiB, against 20 us for a new file (go-binfmt/fwimg#17).
+// The cost is that the path gets a new inode (a hard link or an owner is not
+// kept); a file that cannot be unlinked is truncated, as before.
+func writeOutput(path string, fill func(io.Writer) error) (err error) {
+	perm := os.FileMode(0o644)
+	if st, e := os.Lstat(path); e == nil && st.Mode().IsRegular() {
+		if removeFile(path) == nil {
+			perm = st.Mode().Perm()
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if e := f.Close(); err == nil {
+			err = e
+		}
+	}()
+	return fill(f)
 }
 
 // source is a loaded input: its image, and what only the ELF knows.

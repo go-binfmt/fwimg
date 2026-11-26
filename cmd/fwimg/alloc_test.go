@@ -23,9 +23,10 @@ func allocated(f func()) uint64 {
 }
 
 // TestFlatBinaryCopies pins how often `-O binary` copies the image: the file
-// is read once, and the output is a second copy only when segments must be
-// laid out with gaps between them. v0.2.1 and later copied every segment out of
-// the input first, a whole extra image (0.5x objcopy at 4 MiB in CI).
+// is read once and the output is written from that read, gaps included; no
+// second image is built. v0.2.1 and later copied every segment out of the
+// input first, a whole extra image (0.5x objcopy at 4 MiB in CI), and v0.4.1
+// still laid several segments out in a buffer of their own.
 func TestFlatBinaryCopies(t *testing.T) {
 	const n = 4 << 20
 	body := bytes.Repeat([]byte{0xA5, 0x5A, 0x11}, n/3+1)[:n]
@@ -39,7 +40,7 @@ func TestFlatBinaryCopies(t *testing.T) {
 		extra float64 // the most whole images allocated, beyond the one read
 	}{
 		{"one segment: the read is the only image", one, 0.25},
-		{"two segments: the read, and the laid-out output", two, 1.25},
+		{"two segments: the segments are written from the read, not laid out", two, 0.25},
 	} {
 		out := filepath.Join(t.TempDir(), "out")
 		var err error
