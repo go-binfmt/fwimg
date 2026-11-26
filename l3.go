@@ -400,13 +400,15 @@ func VerifyFlat(r io.Reader, im *Image, pad byte) error {
 		return nil
 	}
 	for _, s := range im.Segments {
-		for gap := s.Addr - at; gap > 0; gap = s.Addr - at {
+		for gap := s.Addr - at; gap > 0; {
 			if fill == nil {
 				fill = bytes.Repeat([]byte{pad}, len(buf))
 			}
-			if err := expect(fill[:min(gap, uint64(len(fill)))]); err != nil {
+			n := min(gap, uint64(len(fill)))
+			if err := expect(fill[:n]); err != nil {
 				return err
 			}
+			gap -= n
 		}
 		if err := expect(s.Data); err != nil {
 			return err

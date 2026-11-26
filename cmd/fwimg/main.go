@@ -697,10 +697,7 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.Section
 			// data is ours and is not written to again: no copy of the image.
 			s.img, err = fwimg.ELFImageView(data, fo)
 		}
-		if err != nil {
-			return nil, err
-		}
-		s.elf, s.machine = true, ef.Machine
+		s.elf, s.machine = true, ef.Machine // an error is returned below, with the others
 	case fwimg.FormatIHEX:
 		s.img, err = fwimg.DecodeIHEX(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
 	case fwimg.FormatSREC:

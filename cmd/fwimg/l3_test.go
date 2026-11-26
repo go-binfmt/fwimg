@@ -410,3 +410,23 @@ func TestL3_HelpListsTheFlags(t *testing.T) {
 		}
 	}
 }
+
+// Overlapping segments are refused as the image is read, with and without -j,
+// and nothing is written.
+func TestL3_OverlappingSegmentsRefused(t *testing.T) {
+	segs := []elfgen.Seg{
+		{Paddr: 0x8000000, Vaddr: 0x8000000, Off: 0x200, Filesz: 16, Memsz: 16, Data: []byte("0123456789abcdef")},
+		{Paddr: 0x8000008, Vaddr: 0x8000008, Off: 0x300, Filesz: 8, Memsz: 8, Data: []byte("DATADATA")},
+	}
+	secs := []elfgen.Sec{
+		{Name: ".text", Type: 1, Flags: 6, Addr: 0x8000000, Off: 0x200, N: 16},
+		{Name: ".data", Type: 1, Flags: 3, Addr: 0x8000008, Off: 0x300, N: 8},
+	}
+	in := put(t, "overlap.elf", elfgen.BuildSections(elf.EM_ARM, 0x8000000, segs, secs))
+	for _, extra := range [][]string{nil, {"-j", ".text", "-j", ".data"}} {
+		o := out(t)
+		args := append([]string{"-O", "binary", "-o", o}, extra...)
+		mustRefuse(t, fwimg.ErrOverlap, nil, nil, append(args, in)...)
+		absent(t, o)
+	}
+}
