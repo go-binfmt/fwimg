@@ -69,7 +69,7 @@ func TestRunTable(t *testing.T) {
 	}
 	// objcopy failing to make the text the decoders read names the format.
 	stub := filepath.Join(t.TempDir(), "objcopy")
-	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncase \"$*\" in *\"-O srec\"*) exit 1;; esac\n"), 0o755); err != nil {
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncase \"$*\" in *\"-O srec /\"*) exit 1;; esac\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := run([]string{"-objcopy", stub, "-mkimage", tr, "-fwimg", tr, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "-O srec on fx") {
