@@ -474,11 +474,11 @@ func (m *Manifest) Verify(im *Image, o VerifyOptions) error {
 // section-header order, for ManifestOptions.Sections. An ELF without section
 // headers has none, which is not an error.
 func ELFManifestSections(data []byte) ([]ManifestSection, error) {
+	var secs []elfpatch.Section
 	f, err := elfpatch.Parse(data)
-	if err != nil {
-		return nil, err
+	if err == nil {
+		secs, err = f.Sections()
 	}
-	secs, err := f.Sections()
 	if errors.Is(err, elfpatch.ErrUnsupported) {
 		return nil, nil // no section headers (stripped): described by its segments alone
 	}
