@@ -121,6 +121,9 @@ func TestOnceRefusals(t *testing.T) {
 		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name != "span over the limit" && c.name != "not an elf" && !strings.Contains(err.Error(), "none")) {
 			t.Errorf("%s: err = %v, want it to start with %q", c.name, err, c.want)
 		}
+		if _, err := os.Stat(c.out); c.name == "span over the limit" && err == nil {
+			t.Errorf("%s: a refused size left an output file", c.name)
+		}
 	}
 	var w bytes.Buffer
 	if err := once1(&w, good, filepath.Join(dir, "o")); err != nil {
