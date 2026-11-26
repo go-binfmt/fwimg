@@ -75,6 +75,14 @@ func TestTextRefusals(t *testing.T) {
 	if err := all(filepath.Join(file, "sub")); err == nil {
 		t.Error("all wrote under a file")
 	}
+	// The ELF corpus failing alone, with the text corpus writable, still fails.
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "FuzzFlatten"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := all(root); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+		t.Errorf("all with an unwritable ELF corpus: err = %v", err)
+	}
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "FuzzIHEX", "valid-empty"), 0o755); err != nil {
 		t.Fatal(err)

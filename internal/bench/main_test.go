@@ -49,6 +49,24 @@ func TestRunTable(t *testing.T) {
 			t.Errorf("no row %s in:\n%s", want, w.String())
 		}
 	}
+	// The text the decoders read is made by objcopy from each fixture, once
+	// per format, before the rows that read it.
+	logDir := t.TempDir()
+	logFile := filepath.Join(logDir, "calls")
+	spy := filepath.Join(logDir, "objcopy")
+	if err := os.WriteFile(spy, []byte("#!/bin/sh\necho \"$*\" >> "+logFile+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	w.Reset()
+	if err := run([]string{"-objcopy", spy, "-mkimage", tr, "-fwimg", tr, "-rounds", "1"}, &w, mk); err != nil {
+		t.Fatal(err)
+	}
+	calls, _ := os.ReadFile(logFile)
+	for _, want := range []string{"-O ihex ", "-O srec "} {
+		if !strings.Contains(string(calls), want) {
+			t.Errorf("objcopy was never asked for %q; calls:\n%s", want, calls)
+		}
+	}
 	// objcopy failing to make the text the decoders read names the format.
 	stub := filepath.Join(t.TempDir(), "objcopy")
 	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncase \"$*\" in *\"-O srec\"*) exit 1;; esac\n"), 0o755); err != nil {
