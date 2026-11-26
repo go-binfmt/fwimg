@@ -193,37 +193,41 @@ From 4 MiB up it is even or faster, and mkimage is far slower.
 
 The decode rows (`-I ihex` / `-I srec` to a flat binary, reading a text file
 objcopy and srec_cat would read) are in the CI table. It is the `bench` job of
-the CI run 45782805864 on main at `6519340bbf43`, quoted as printed (Ubuntu
-x86-64 runner, GNU objcopy 2.46, 60 rounds, one core, load average 1.52 at
-the start):
+the CI run 45888191102 on main at `2d5d60c2d0f0` (v0.4.3), quoted as printed
+(Ubuntu x86-64 runner, GNU objcopy 2.46, 60 rounds, one core, load average
+1.22 at the start):
 
 | file | operation | reference | fwimg | reference / fwimg |
 |---|---|---:|---:|---:|
-| small (1 KiB) | `-O binary` | 1.54ms | 2.45ms | 0.6x |
-| small (1 KiB) | `-O srec` | 1.54ms | 2.39ms | 0.6x |
-| small (1 KiB) | `-O ihex` | 1.49ms | 2.4ms | 0.6x |
-| small (1 KiB) | `-O uimage` (mkimage: flat file in) | 2.32ms | 2.46ms | 0.9x |
-| small (1 KiB) | `-I ihex -O binary` | 1.48ms | 2.43ms | 0.6x |
-| small (1 KiB) | `-I srec -O binary` | 1.48ms | 2.41ms | 0.6x |
-| 4 MiB | `-O binary` | 5.14ms | 9.67ms | 0.5x |
-| 4 MiB | `-O srec` | 31.06ms | 32.45ms | 1.0x |
-| 4 MiB | `-O ihex` | 28.38ms | 31.44ms | 0.9x |
-| 4 MiB | `-O uimage` (mkimage: flat file in) | 24.73ms | 13.41ms | 1.8x |
-| 4 MiB | `-I ihex -O binary` | 74.55ms | 49.87ms | 1.5x |
-| 4 MiB | `-I srec -O binary` | 68.68ms | 50.7ms | 1.4x |
-| 32 MiB | `-O binary` | 33.52ms | 57.2ms | 0.6x |
-| 32 MiB | `-O srec` | 255.83ms | 221.58ms | 1.2x |
-| 32 MiB | `-O ihex` | 229.04ms | 212.08ms | 1.1x |
-| 32 MiB | `-O uimage` (mkimage: flat file in) | 190.8ms | 82.11ms | 2.3x |
-| 32 MiB | `-I ihex -O binary` | 580.2ms | 374.92ms | 1.5x |
-| 32 MiB | `-I srec -O binary` | 533.25ms | 392.33ms | 1.4x |
+| small (1 KiB) | `-O binary` | 1.26ms | 2.09ms | 0.6x |
+| small (1 KiB) | `-O srec` | 1.27ms | 2.05ms | 0.6x |
+| small (1 KiB) | `-O ihex` | 1.25ms | 2.09ms | 0.6x |
+| small (1 KiB) | `-O uimage` (mkimage: flat file in) | 2ms | 2.2ms | 0.9x |
+| small (1 KiB) | `-I ihex -O binary` | 1.21ms | 2.11ms | 0.6x |
+| small (1 KiB) | `-I srec -O binary` | 1.21ms | 2.1ms | 0.6x |
+| 4 MiB | `-O binary` | 4.07ms | 4.46ms | 0.9x |
+| 4 MiB | `-O srec` | 26.05ms | 23.38ms | 1.1x |
+| 4 MiB | `-O ihex` | 24.11ms | 21.53ms | 1.1x |
+| 4 MiB | `-O uimage` (mkimage: flat file in) | 33.36ms | 7.1ms | 4.7x |
+| 4 MiB | `-I ihex -O binary` | 63.59ms | 39.68ms | 1.6x |
+| 4 MiB | `-I srec -O binary` | 58.05ms | 39.75ms | 1.5x |
+| 32 MiB | `-O binary` | 30.01ms | 30.93ms | 1.0x |
+| 32 MiB | `-O srec` | 206.26ms | 157.8ms | 1.3x |
+| 32 MiB | `-O ihex` | 185.48ms | 143.11ms | 1.3x |
+| 32 MiB | `-O uimage` (mkimage: flat file in) | 286.31ms | 36.15ms | 7.9x |
+| 32 MiB | `-I ihex -O binary` | 483.35ms | 289.91ms | 1.7x |
+| 32 MiB | `-I srec -O binary` | 440.42ms | 301.2ms | 1.5x |
 
-Reading text is faster than objcopy from 4 MiB up (1.4x to 1.5x). The rows
+Reading text is faster than objcopy from 4 MiB up (1.5x to 1.7x). The rows
 where fwimg is behind are the 1 KiB ones (process start, above) and
-`-O binary` at 4 and 32 MiB, which the table above, taken on another machine,
-shows even; on this runner the flat write is 0.5x to 0.6x and stays an open
-defect to be measured on a quiet machine (the L2 options are not in it: none of
-them changes the cost of the default path).
+`-O binary` at 4 MiB (0.9x here, 0.92x on the run of the pull request that
+mapped the input). The flat write was 0.5x and 0.6x at 4 and 32 MiB before
+v0.4.2: it built a second image and truncated an existing output in place
+(go-binfmt/fwimg#17). v0.4.2 streams the segments and unlinks an existing
+output first, as objcopy does; v0.4.3 maps an ELF input instead of reading it.
+The 32 MiB row is now even to 1.2x between runs; the 4 MiB row is behind by
+about 0.3 ms, a start-up cost of the Go runtime (some 330 more page faults
+than objcopy), the same one as the 1 KiB rows.
 
 ## Development
 
