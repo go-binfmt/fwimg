@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -180,8 +181,13 @@ func TestInputLimitAndStatFailure(t *testing.T) {
 		t.Fatalf("one byte over the limit: err = %v", err)
 	}
 	maxInput = oldMax
+	// A raw file is read, not mapped: the stat is its own.
+	in = filepath.Join(t.TempDir(), "raw.bin")
+	if err := os.WriteFile(in, []byte("ABCD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	statFile = func(*os.File) (os.FileInfo, error) { return nil, os.ErrPermission }
-	if _, _, err := runCmd(t, "-o", out, in); err == nil || !strings.Contains(err.Error(), in+": ") {
+	if _, _, err := runCmd(t, "-I", "binary", "--base", "0", "-o", out, in); err == nil || !strings.Contains(err.Error(), in+": ") {
 		t.Fatalf("failing stat: err = %v", err)
 	}
 	if _, err := os.Stat(out); err == nil {
@@ -369,4 +375,46 @@ func TestWriteOutputRefusals(t *testing.T) {
 	if b, _ := os.ReadFile(out); string(b) != "keep" {
 		t.Errorf("a refused image replaced the output: %q", b)
 	}
+}
+
+// A file cut while it is mapped must end the run with an error, not with the
+// SIGBUS that kills the process: the access faults, mapGuard reports it.
+func TestInputTruncatedWhileMapped(t *testing.T) {
+	switch runtime.GOOS {
+	case "linux", "darwin", "freebsd", "netbsd", "openbsd", "dragonfly":
+	default:
+		t.Skip("the input is a copy here, not a mapping")
+	}
+	in := simple(t)
+	out := filepath.Join(t.TempDir(), "k.img")
+	old := afterMap
+	defer func() { afterMap = old }()
+	afterMap = func(p string) {
+		if err := os.Truncate(p, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, err := runCmd(t, "-o", out, in)
+	if err == nil || !strings.Contains(err.Error(), "changed while it was mapped") {
+		t.Fatalf("err = %v, want the input to be reported as changed while mapped", err)
+	}
+	// The same process maps the next input and succeeds.
+	afterMap = old
+	if _, _, err := runCmd(t, "-o", out, simple(t)); err != nil {
+		t.Fatalf("after the fault: %v", err)
+	}
+}
+
+// mapGuard hands any other panic on: only a fault is the file's doing.
+func TestMapGuardRepanicsOthers(t *testing.T) {
+	defer func() {
+		if r := recover(); r != "boom" {
+			t.Fatalf("recovered %v, want the original panic", r)
+		}
+	}()
+	var err error
+	func() {
+		defer mapGuard(&err)()
+		panic("boom")
+	}()
 }

@@ -10,8 +10,10 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strconv"
+	"strings"
 
 	"github.com/go-binfmt/elfpatch"
 	"github.com/go-binfmt/fwimg"
@@ -259,6 +261,49 @@ func readInput(input string) ([]byte, error) {
 	return data, nil
 }
 
+// afterMap is replaceable in tests: it runs once an input is mapped, where a
+// test changes the file under the mapping.
+var afterMap = func(string) {}
+
+// inputBytes returns the bytes of an input and the function that releases
+// them. An ELF is mapped (elfpatch.Open: read-only, the pages are faulted in
+// as they are used, and a system without mmap reads the file), so the 4 or
+// 32 MiB of a firmware are not copied into a buffer first
+// (go-binfmt/fwimg#17). Anything else, and any input Open refuses, is read as
+// before, so the error of a bad input is the one readInput and the parsers
+// always gave. Use the bytes under mapGuard: a file truncated while mapped
+// faults on access.
+func inputBytes(input string) ([]byte, func() error, error) {
+	if f, err := elfpatch.Open(input); err == nil {
+		if b := f.Bytes(); int64(len(b)) <= maxInput {
+			afterMap(input)
+			return b, f.Close, nil
+		}
+		f.Close()
+	}
+	data, err := readInput(input)
+	return data, func() error { return nil }, err
+}
+
+// mapGuard makes a fault on mapped memory a panic of this goroutine for as long
+// as it runs, and turns that panic into *errp: the input was truncated while
+// it was mapped. Use it as `defer mapGuard(&err)()`.
+func mapGuard(errp *error) func() {
+	old := debug.SetPanicOnFault(true)
+	return func() {
+		debug.SetPanicOnFault(old)
+		if r := recover(); r != nil {
+			// Linux reports "unexpected fault address"; macOS gives SIGBUS no
+			// address, which Go reads as a nil dereference. The message is kept.
+			if re, ok := r.(runtime.Error); ok && (strings.Contains(re.Error(), "fault") || strings.Contains(re.Error(), "nil pointer")) {
+				*errp = fmt.Errorf("the input file changed while it was mapped: %v", re)
+				return
+			}
+			panic(r)
+		}
+	}
+}
+
 func parseUint(flag, s string, bits int) (uint64, error) {
 	v, err := strconv.ParseUint(s, 0, bits)
 	if err != nil {
@@ -275,7 +320,7 @@ func parseInt(flag, s string) (int64, error) {
 	return v, nil
 }
 
-func run(o *options, input string) error {
+func run(o *options, input string) (err error) {
 	if o.output == "" {
 		return usageErr{"-o/--output is required"}
 	}
@@ -379,10 +424,12 @@ func run(o *options, input string) error {
 		}
 	}
 
-	data, err := readInput(input)
+	data, release, err := inputBytes(input)
 	if err != nil {
 		return err
 	}
+	defer release()
+	defer mapGuard(&err)()
 	in := o.input
 	if in == "" {
 		if in = fwimg.Detect(data); in == "" {
