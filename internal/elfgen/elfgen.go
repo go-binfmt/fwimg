@@ -15,6 +15,52 @@ type Seg struct {
 	Data                             []byte
 }
 
+// Sec is one section header. Its bytes are the file's own at Off, written by
+// the segments that hold them; Build only names it.
+type Sec struct {
+	Name                string
+	Type                uint32
+	Flags, Addr, Off, N uint64
+}
+
+// BuildSections is Build plus a section header table (a null section, secs
+// in order, and a string table) appended after the segment data.
+func BuildSections(machine elf.Machine, entry uint64, segs []Seg, secs []Sec) []byte {
+	buf := Build(machine, entry, segs)
+	str := []byte{0}
+	names := make([]uint32, len(secs))
+	for i, s := range secs {
+		names[i] = uint32(len(str))
+		str = append(str, s.Name...)
+		str = append(str, 0)
+	}
+	strOff := uint64(len(buf))
+	buf = append(buf, str...)
+	for len(buf)%8 != 0 {
+		buf = append(buf, 0)
+	}
+	shoff := uint64(len(buf))
+	buf = append(buf, make([]byte, 64*(len(secs)+2))...)
+	put := func(i int, name, typ uint32, flags, addr, off, size uint64) {
+		h := buf[shoff+uint64(64*i):]
+		binary.LittleEndian.PutUint32(h, name)
+		binary.LittleEndian.PutUint32(h[4:], typ)
+		binary.LittleEndian.PutUint64(h[8:], flags)
+		binary.LittleEndian.PutUint64(h[16:], addr)
+		binary.LittleEndian.PutUint64(h[24:], off)
+		binary.LittleEndian.PutUint64(h[32:], size)
+	}
+	for i, s := range secs {
+		put(i+1, names[i], s.Type, s.Flags, s.Addr, s.Off, s.N)
+	}
+	put(len(secs)+1, 0, uint32(elf.SHT_STRTAB), 0, 0, strOff, uint64(len(str)))
+	binary.LittleEndian.PutUint64(buf[40:], shoff)
+	binary.LittleEndian.PutUint16(buf[58:], 64)
+	binary.LittleEndian.PutUint16(buf[60:], uint16(len(secs)+2))
+	binary.LittleEndian.PutUint16(buf[62:], uint16(len(secs)+1))
+	return buf
+}
+
 // Build returns an ELF64 executable of the given machine with one PT_LOAD
 // program header per segment.
 func Build(machine elf.Machine, entry uint64, segs []Seg) []byte {

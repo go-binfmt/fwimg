@@ -34,8 +34,44 @@ fwimg -O binary -o kernel.bin uImage                     # the payload of a uIma
 fwimg info uImage                                        # the header, as mkimage -l prints it
 ```
 
+## objcopy's options, and the two text formats in detail
+
+Since v0.4.0 the options that shape an image are the ones objcopy has, with
+the same names and the same output, byte for byte, CRLF included:
+
+```
+fwimg -O srec -j '.text*' -j .rodata -o fw.srec fw.elf   # -j: keep these sections (wildcards * ?)
+fwimg -O srec -R '.*' -R '!.text' -o fw.srec fw.elf      # -R: drop these; a leading ! protects a name
+fwimg -O srec --gap-fill 0xff --pad-to 0x90400 -o fw.srec fw.elf
+fwimg -O ihex --change-addresses 0x100 -o fw.hex fw.elf  # --adjust-vma is the same
+fwimg -O ihex --set-start 0x80010 -o fw.hex fw.elf       # or --change-start N (an increment)
+fwimg -O srec --srec-addr-len auto --srec-count --crlf -o fw.srec fw.elf
+fwimg -O ihex --ihex-mode objcopy --crlf -o fw.hex fw.elf
+```
+
+* `-j` / `-R` select by section name and need an ELF with section headers
+  (without `-j`/`-R` the image is built from the program headers, as before).
+  A name matched by a `!` pattern is never selected, whatever the order; giving
+  both `-j` and `-R` is refused, because objcopy calls it undefined.
+* `--gap-fill` / `--pad` (the same option, one value) fill the gaps between
+  segments, and `--pad-to ADDR` pads the end; the fill is bounded by
+  `--max-size` and refused before it is allocated.
+* `--change-addresses` / `--adjust-vma` moves the segments and the start
+  address; `--change-start` moves the start address only; the later of the two
+  on the command line wins, as in objcopy. `--set-start` (or `--entry`) sets it.
+* S-record: `--srec-addr-len 16|24|32|auto` writes S1/S9, S2/S8 or S3/S7 (auto
+  picks the shortest that holds the highest address, as objcopy does), and
+  `--srec-count` adds the S5 (or S6) count record, as srec_cat does.
+* Intel HEX: `--ihex-mode linear` (default) writes type 04 and type 05 records,
+  as srec_cat; `objcopy` writes type 02 below 1 MiB and type 03 for the start
+  address. A start address is written in both (new in v0.4.0: an ELF's entry
+  was dropped from Intel HEX before).
+* `--crlf` ends every line with CR LF, as objcopy and srec_cat do (LF by default).
+
 The library is `github.com/go-binfmt/fwimg`: `Flatten`, `SREC`, `IHEX`,
-`UImage`, the readers `DecodeIHEX`, `DecodeSREC`, `ParseUImage`, `RawImage`
+`UImage`, the L2 additions `ELFImage`, `ELFSections` (with `SectionSelect`),
+`EncodeSRECOpts` and `EncodeIHEXOpts`, with `Image.GapFill`, `PadTo` and
+`Offset`; the readers `DecodeIHEX`, `DecodeSREC`, `ParseUImage`, `RawImage`
 and `Detect` (an `Image` of sparse segments), plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
 
 ```go
@@ -103,6 +139,13 @@ write (`-O ihex`, `-O srec`, `--srec-forceS3`, `--srec-len`, raw files placed wi
 our files, and compares `Listing` with `mkimage -l` for six header shapes and a
 multi-file image; `dumpimage` extracts our payload.
 
+`differential_l2_test.go` covers the v0.4.0 options: the S-record (auto and S3)
+and Intel HEX (objcopy mode) files are compared with objcopy's byte for byte
+(S0 header aside, objcopy takes its text from the file name) for `--gap-fill`,
+`--pad-to`, `-j` and `-R` with wildcards and `!`, `--change-addresses`,
+`--adjust-vma`, `--set-start` and `--change-start`; the S5 count and the linear
+Intel HEX are compared with srec_cat's.
+
 CI installs `gcc binutils srecord u-boot-tools` and sets `FWIMG_REQUIRE_DIFF`, so a missing
 tool is a failure and not a skip; elsewhere the lane skips with the reason stated.
 Nothing binary is committed.
@@ -147,6 +190,40 @@ runner (1 KiB, `-O binary`, 60 rounds, Ubuntu x86-64, one core):
 About 350µs of the gap is fwimg's own work, beyond the noise; it is tracked in
 go-binfmt/fwimg#2. `internal/startup` times processes and counts page faults.
 From 4 MiB up it is even or faster, and mkimage is far slower.
+
+The decode rows (`-I ihex` / `-I srec` to a flat binary, reading a text file
+objcopy and srec_cat would read) are in the CI table. It is the `bench` job of
+the CI run 45782805864 on main at `6519340bbf43`, quoted as printed (Ubuntu
+x86-64 runner, GNU objcopy 2.46, 60 rounds, one core, load average 1.52 at
+the start):
+
+| file | operation | reference | fwimg | reference / fwimg |
+|---|---|---:|---:|---:|
+| small (1 KiB) | `-O binary` | 1.54ms | 2.45ms | 0.6x |
+| small (1 KiB) | `-O srec` | 1.54ms | 2.39ms | 0.6x |
+| small (1 KiB) | `-O ihex` | 1.49ms | 2.4ms | 0.6x |
+| small (1 KiB) | `-O uimage` (mkimage: flat file in) | 2.32ms | 2.46ms | 0.9x |
+| small (1 KiB) | `-I ihex -O binary` | 1.48ms | 2.43ms | 0.6x |
+| small (1 KiB) | `-I srec -O binary` | 1.48ms | 2.41ms | 0.6x |
+| 4 MiB | `-O binary` | 5.14ms | 9.67ms | 0.5x |
+| 4 MiB | `-O srec` | 31.06ms | 32.45ms | 1.0x |
+| 4 MiB | `-O ihex` | 28.38ms | 31.44ms | 0.9x |
+| 4 MiB | `-O uimage` (mkimage: flat file in) | 24.73ms | 13.41ms | 1.8x |
+| 4 MiB | `-I ihex -O binary` | 74.55ms | 49.87ms | 1.5x |
+| 4 MiB | `-I srec -O binary` | 68.68ms | 50.7ms | 1.4x |
+| 32 MiB | `-O binary` | 33.52ms | 57.2ms | 0.6x |
+| 32 MiB | `-O srec` | 255.83ms | 221.58ms | 1.2x |
+| 32 MiB | `-O ihex` | 229.04ms | 212.08ms | 1.1x |
+| 32 MiB | `-O uimage` (mkimage: flat file in) | 190.8ms | 82.11ms | 2.3x |
+| 32 MiB | `-I ihex -O binary` | 580.2ms | 374.92ms | 1.5x |
+| 32 MiB | `-I srec -O binary` | 533.25ms | 392.33ms | 1.4x |
+
+Reading text is faster than objcopy from 4 MiB up (1.4x to 1.5x). The rows
+where fwimg is behind are the 1 KiB ones (process start, above) and
+`-O binary` at 4 and 32 MiB, which the table above, taken on another machine,
+shows even; on this runner the flat write is 0.5x to 0.6x and stays an open
+defect to be measured on a quiet machine (the L2 options are not in it: none of
+them changes the cost of the default path).
 
 ## Development
 
