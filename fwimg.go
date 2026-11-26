@@ -27,9 +27,6 @@ import (
 	"io"
 	"math"
 	"slices"
-	"sort"
-
-	"github.com/go-binfmt/elfpatch"
 )
 
 // ELF constants fwimg needs: the PT_LOAD segment type and the machines it
@@ -107,82 +104,11 @@ func Flatten(r io.ReaderAt, size int64, opts FlattenOptions) ([]byte, uint64, er
 // FlattenBytes is Flatten for an image already in memory (at most 2 GiB, the
 // bound elfpatch.Parse holds); the segments are copied out of data.
 func FlattenBytes(data []byte, opts FlattenOptions) ([]byte, uint64, error) {
-	size := int64(len(data))
-	ef, err := elfpatch.Parse(data)
-	if errors.Is(err, elfpatch.ErrSegmentRange) {
-		return nil, 0, fmt.Errorf("%w: %w", ErrRange, err)
-	}
+	im, err := ELFImage(data, opts)
 	if err != nil {
-		return nil, 0, fmt.Errorf("parse ELF: %w", err)
+		return nil, 0, err
 	}
-	limit := opts.MaxSize
-	if limit == 0 {
-		limit = DefaultMaxSize
-	}
-	if limit > math.MaxInt {
-		limit = math.MaxInt
-	}
-	addr := func(p *elfpatch.Prog) uint64 {
-		if opts.UseVaddr {
-			return p.Vaddr
-		}
-		return p.Paddr
-	}
-	var loads []*elfpatch.Prog
-	progs := ef.Progs()
-	for i := range progs {
-		if p := &progs[i]; p.Type == ptLoad && p.Filesz > 0 {
-			loads = append(loads, p)
-		}
-	}
-	if len(loads) == 0 {
-		return nil, 0, fmt.Errorf("no PT_LOAD segments with file content")
-	}
-	for i, p := range loads {
-		// p.Off+p.Filesz must not wrap, and must end inside the input.
-		if p.Off > uint64(size) || p.Filesz > uint64(size)-p.Off {
-			return nil, 0, fmt.Errorf("%w: segment %d offset 0x%x size 0x%x, input is %d bytes", ErrRange, i, p.Off, p.Filesz, size)
-		}
-		if p.Filesz > math.MaxUint64-addr(p) {
-			return nil, 0, fmt.Errorf("%w: segment %d address 0x%x size 0x%x", ErrAddrOverflow, i, addr(p), p.Filesz)
-		}
-	}
-	sort.SliceStable(loads, func(i, j int) bool { return addr(loads[i]) < addr(loads[j]) })
-
-	base := addr(loads[0])
-	var end uint64
-	for i, p := range loads {
-		e := addr(p) + p.Filesz // cannot wrap: checked above
-		if i > 0 && addr(p) < end {
-			return nil, 0, fmt.Errorf("%w: segment at 0x%x starts before 0x%x", ErrOverlap, addr(p), end)
-		}
-		end = e
-	}
-	// Sorted and disjoint, so end is the highest address and the segments
-	// together never read more than end-base bytes.
-	if end-base > limit {
-		return nil, 0, fmt.Errorf("%w: 0x%x..0x%x is %d bytes, limit %d", ErrTooLarge, base, end, end-base, limit)
-	}
-	out := make([]byte, int(end-base))
-	if opts.Pad != 0 {
-		for i := range out {
-			out[i] = opts.Pad
-		}
-	}
-	for _, p := range loads {
-		at := int(addr(p) - base)
-		copy(out[at:at+int(p.Filesz)], data[p.Off:p.Off+p.Filesz])
-	}
-	return out, base, nil
-}
-
-// checkSpan refuses a range of n bytes starting at the 32-bit address addr
-// that would run past the end of the 32-bit address space.
-func checkSpan(addr uint64, n int) error {
-	if addr > 1<<32 || addr+uint64(n) > 1<<32 {
-		return fmt.Errorf("%w: %d bytes at 0x%08x run past 4 GiB", ErrAddrOverflow, n, addr)
-	}
-	return nil
+	return im.Flat(opts.Pad, opts.MaxSize)
 }
 
 // --- Motorola S-record (SREC) -------------------------------------------------
@@ -209,70 +135,7 @@ func SREC(addr uint32, data []byte, name string, entry uint32, dataPerLine int) 
 // same refusals as SREC apply, and an entry above 32 bits is refused
 // (ErrAddrOverflow).
 func EncodeSREC(im *Image, name string, dataPerLine int) ([]byte, error) {
-	if dataPerLine <= 0 {
-		dataPerLine = 16
-	}
-	if dataPerLine > 250 {
-		return nil, fmt.Errorf("%w: %d data bytes per S-record, at most 250", ErrFormat, dataPerLine)
-	}
-	if len(name) > 252 {
-		return nil, fmt.Errorf("%w: S0 name of %d bytes, at most 252", ErrFormat, len(name))
-	}
-	for _, s := range im.Segments {
-		if err := checkSpan(s.Addr, len(s.Data)); err != nil {
-			return nil, err
-		}
-	}
-	var entry uint64
-	if im.HasEntry {
-		entry = im.Entry
-	}
-	if entry > math.MaxUint32 {
-		return nil, fmt.Errorf("%w: start address 0x%x does not fit 32 bits", ErrAddrOverflow, entry)
-	}
-	size, err := textSize(im.Len()+uint64(len(name)), dataPerLine)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 0, size)
-	// S0 header: address 0x0000, data = name bytes.
-	out = srecLine(out, '0', 0, []byte(name))
-	// S3 data records.
-	for _, s := range im.Segments {
-		for off := 0; off < len(s.Data); off += dataPerLine {
-			end := min(off+dataPerLine, len(s.Data))
-			out = srecLine(out, '3', uint32(s.Addr)+uint32(off), s.Data[off:end])
-		}
-	}
-	// S7 termination with the entry address, no data.
-	out = srecLine(out, '7', uint32(entry), nil)
-	return out, nil
-}
-
-// srecLine appends one S-record. S3 and S7 carry a 4-byte address; S0 is the
-// header record and carries the 2-byte address 0000 the format defines (a
-// 4-byte S0 would have a strict reader take two zero bytes for the name).
-func srecLine(out []byte, typ byte, addr uint32, data []byte) []byte {
-	var a [4]byte
-	binary.BigEndian.PutUint32(a[:], addr)
-	ab := a[:]
-	if typ == '0' {
-		ab = a[2:]
-	}
-	count := len(ab) + len(data) + 1 // address + data + checksum
-	sum := count
-	for _, b := range ab {
-		sum += int(b)
-	}
-	for _, b := range data {
-		sum += int(b)
-	}
-	out = append(out, 'S', typ)
-	out = appendHexByte(out, byte(count))
-	out = appendHex(out, ab)
-	out = appendHex(out, data)
-	out = appendHexByte(out, byte(^sum&0xff))
-	return append(out, '\n')
+	return EncodeSRECOpts(im, SRECOptions{Name: name, DataPerLine: dataPerLine})
 }
 
 // --- Intel HEX (IHEX) ---------------------------------------------------------
@@ -298,70 +161,7 @@ func IHEX(addr uint32, data []byte, dataPerLine int) ([]byte, error) {
 // type-05 record before the EOF (objcopy does not write one for 0), and one
 // above 32 bits is refused (ErrAddrOverflow). The same refusals as IHEX apply.
 func EncodeIHEX(im *Image, dataPerLine int) ([]byte, error) {
-	if dataPerLine <= 0 {
-		dataPerLine = 16
-	}
-	if dataPerLine > 255 {
-		return nil, fmt.Errorf("%w: %d data bytes per record, at most 255", ErrFormat, dataPerLine)
-	}
-	for _, s := range im.Segments {
-		if err := checkSpan(s.Addr, len(s.Data)); err != nil {
-			return nil, err
-		}
-	}
-	if im.HasEntry && im.Entry > math.MaxUint32 {
-		return nil, fmt.Errorf("%w: start address 0x%x does not fit 32 bits", ErrAddrOverflow, im.Entry)
-	}
-	size, err := textSize(im.Len(), dataPerLine)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]byte, 0, size)
-	// The segment base starts at 0, which is what a reader assumes before
-	// any type-04 record: no record is needed until the upper half differs.
-	var upper uint32
-	for _, s := range im.Segments {
-		addr, data := uint32(s.Addr), s.Data
-		for off := 0; off < len(data); {
-			cur := addr + uint32(off)
-			hi := cur >> 16
-			// A record never crosses a 64 KiB boundary: its 16-bit address
-			// would wrap inside the segment.
-			n := min(dataPerLine, len(data)-off, int(0x10000-(cur&0xffff)))
-			if hi != upper {
-				upper = hi
-				var ext [2]byte
-				binary.BigEndian.PutUint16(ext[:], uint16(hi))
-				out = ihexRecord(out, 0, 0x04, ext[:])
-			}
-			out = ihexRecord(out, uint16(cur), 0x00, data[off:off+n])
-			off += n
-		}
-	}
-	if im.HasEntry && im.Entry != 0 {
-		var e [4]byte
-		binary.BigEndian.PutUint32(e[:], uint32(im.Entry))
-		out = ihexRecord(out, 0, 0x05, e[:])
-	}
-	return ihexRecord(out, 0, 0x01, nil), nil // EOF
-}
-
-// ihexRecord appends one Intel HEX record.
-func ihexRecord(out []byte, addr uint16, typ byte, data []byte) []byte {
-	out = append(out, ':')
-	out = appendHexByte(out, byte(len(data)))
-	var a [2]byte
-	binary.BigEndian.PutUint16(a[:], addr)
-	out = appendHex(out, a[:])
-	out = appendHexByte(out, typ)
-	out = appendHex(out, data)
-	sum := len(data) + int(a[0]) + int(a[1]) + int(typ)
-	for _, b := range data {
-		sum += int(b)
-	}
-	cksum := byte(-sum & 0xff)
-	out = appendHexByte(out, cksum)
-	return append(out, '\n')
+	return EncodeIHEXOpts(im, IHEXOptions{DataPerLine: dataPerLine})
 }
 
 // --- U-Boot legacy uImage -----------------------------------------------------

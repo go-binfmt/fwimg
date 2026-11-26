@@ -92,7 +92,30 @@ type options struct {
 	useVaddr                               bool
 	maxSize                                string
 	osCode, typeCode                       uint8
+
+	// L2: what objcopy's options of the same names do.
+	only, remove []string // -j, -R
+	padTo        string
+	gapFill      string
+	crlf         bool
+	ihexMode     string
+	srecAddrLen  string
+	srecCount    bool
+	// --change-addresses and --change-start both set the start-address
+	// increment, and the later one on the command line wins, as in objcopy;
+	// --change-addresses also moves every section.
+	shift, startIncr string
 }
+
+// hook is a flag whose value is handled by a function, so that two flags can
+// write one variable in command-line order.
+type hook struct {
+	f func(string) error
+}
+
+func (h hook) String() string     { return "" }
+func (h hook) Set(s string) error { return h.f(s) }
+func (h hook) Type() string       { return "int" }
 
 // RootCmd builds the command.
 func RootCmd() *cobra.Command {
@@ -156,6 +179,19 @@ fwimg info FILE lists the header of a uImage the way mkimage -l does.`,
 	fl.StringVar(&o.arch, "uimage-arch", "", "uimage arch: arm, arm64, x86_64, riscv, loongarch (default: from ELF)")
 	fl.Uint8Var(&o.osCode, "uimage-os", 0, "uimage OS code (default 5 = Linux)")
 	fl.Uint8Var(&o.typeCode, "uimage-type", 0, "uimage type code (default 2 = kernel)")
+	fl.StringVar(&o.entry, "set-start", "", "alias of --entry (objcopy's name)")
+	fl.StringVar(&o.gapFill, "gap-fill", "", "fill the gaps between sections with this byte (objcopy's name; --pad is the same for a flat binary)")
+	fl.StringVar(&o.padTo, "pad-to", "", "pad the image with the gap fill byte up to this address")
+	fl.Var(hook{func(s string) error { o.startIncr = s; return nil }}, "change-start", "add this (signed) amount to the start address, after --set-start")
+	changeAddr := hook{func(s string) error { o.shift, o.startIncr = s, s; return nil }}
+	fl.Var(changeAddr, "change-addresses", "add this (signed) amount to every section address, and to the start address; the later of this and --change-start wins")
+	fl.Var(changeAddr, "adjust-vma", "alias of --change-addresses")
+	fl.StringArrayVarP(&o.only, "only-section", "j", nil, "keep only the sections matching this pattern (* ? and a leading ! to exclude); repeatable; ELF input")
+	fl.StringArrayVarP(&o.remove, "remove-section", "R", nil, "drop the sections matching this pattern; repeatable; ELF input; not with -j")
+	fl.BoolVar(&o.crlf, "crlf", false, "end the lines of an S-record or Intel HEX file with CR LF, as objcopy and srec_cat do")
+	fl.StringVar(&o.ihexMode, "ihex-mode", "linear", "Intel HEX address records: linear (type 04, like srec_cat) or objcopy (type 02/03 below 1 MiB, 04/05 above)")
+	fl.StringVar(&o.srecAddrLen, "srec-addr-len", "32", "S-record address length: 16 (S1), 24 (S2), 32 (S3) or auto (objcopy's choice by the highest address)")
+	fl.BoolVar(&o.srecCount, "srec-count", false, "write an S5/S6 count record before the terminator, as srec_cat does")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "info FILE",
 		Short: "List a uImage header the way mkimage -l does",
@@ -231,6 +267,14 @@ func parseUint(flag, s string, bits int) (uint64, error) {
 	return v, nil
 }
 
+func parseInt(flag, s string) (int64, error) {
+	v, err := strconv.ParseInt(s, 0, 64)
+	if err != nil {
+		return 0, usageErr{fmt.Sprintf("--%s: %q is not a signed 64-bit number", flag, s)}
+	}
+	return v, nil
+}
+
 func run(o *options, input string) error {
 	if o.output == "" {
 		return usageErr{"-o/--output is required"}
@@ -287,6 +331,54 @@ func run(o *options, input string) error {
 		}
 	}
 
+	if o.gapFill != "" {
+		v, err := parseUint("gap-fill", o.gapFill, 8)
+		if err != nil {
+			return err
+		}
+		if o.pad != "" && byte(v) != fo.Pad {
+			return usageErr{"--pad and --gap-fill are the same option and give different bytes"}
+		}
+		fo.Pad = byte(v)
+	}
+	var padTo uint64
+	if o.padTo != "" {
+		if padTo, err = parseUint("pad-to", o.padTo, 64); err != nil {
+			return err
+		}
+	}
+	var shift, startIncr int64
+	if o.shift != "" {
+		if shift, err = parseInt("change-addresses", o.shift); err != nil {
+			return err
+		}
+	}
+	if o.startIncr != "" {
+		if startIncr, err = parseInt("change-start", o.startIncr); err != nil {
+			return err
+		}
+	}
+	if len(o.only) > 0 && len(o.remove) > 0 {
+		return usageErr{"-j and -R together are undefined (objcopy says so too): give one"}
+	}
+	var ihexMode fwimg.IHEXMode
+	switch o.ihexMode {
+	case "linear":
+	case "objcopy":
+		ihexMode = fwimg.IHEXObjcopy
+	default:
+		return usageErr{fmt.Sprintf("unknown --ihex-mode %q (want linear, objcopy)", o.ihexMode)}
+	}
+	srecBits := fwimg.SRECAuto
+	if o.srecAddrLen != "auto" {
+		switch o.srecAddrLen {
+		case "16", "24", "32":
+			srecBits = int(o.srecAddrLen[0]-'0')*10 + int(o.srecAddrLen[1]-'0')
+		default:
+			return usageErr{fmt.Sprintf("unknown --srec-addr-len %q (want 16, 24, 32, auto)", o.srecAddrLen)}
+		}
+	}
+
 	data, err := readInput(input)
 	if err != nil {
 		return err
@@ -297,25 +389,47 @@ func run(o *options, input string) error {
 			return fmt.Errorf("%s: %w; a raw binary is read only with -I binary --base ADDR", input, fwimg.ErrUnknownFormat)
 		}
 	}
-	src, err := load(in, data, fo, rawBase, input)
+	if (len(o.only) > 0 || len(o.remove) > 0) && in != fwimg.FormatELF {
+		return usageErr{"-j and -R select the sections of an ELF input; this input has none"}
+	}
+	sel := fwimg.SectionSelect{Only: o.only, Remove: o.remove}
+	src, err := load(in, data, fo, sel, rawBase, input)
 	if err != nil {
 		return err
 	}
 	im := src.img
 
-	// The start address: the input's, unless --entry gives one. An ELF's
-	// start is not written to Intel HEX (as in v0.2.1): L2 adds the records.
+	// The start address: the input's, unless --set-start/--entry gives one,
+	// then moved by --change-start (objcopy's order).
 	entry, hasEntry := im.Entry, im.HasEntry
-	if in == fwimg.FormatELF && o.format == "ihex" {
-		hasEntry = false
-	}
 	if o.entry != "" {
 		entry, hasEntry = entryAddr, true
+	}
+	if o.startIncr != "" {
+		if startIncr < 0 && entry < uint64(-startIncr) || startIncr > 0 && entry > math.MaxUint64-uint64(startIncr) {
+			return fmt.Errorf("%w: start address 0x%x moved by %d", fwimg.ErrAddrOverflow, entry, startIncr)
+		}
+		entry, hasEntry = entry+uint64(startIncr), true
+	}
+	if o.shift != "" {
+		if err := im.Offset(shift); err != nil {
+			return err
+		}
 	}
 	if o.load != "" {
 		// Cannot fail here: a 32-bit address moves no image whose end is
 		// within 2^32 of 2^64 past 2^64 (Shift's own test covers the refusal).
 		_ = im.Shift(loadAddr)
+	}
+	if o.pad != "" || o.gapFill != "" {
+		if err := im.GapFill(fo.Pad, fo.MaxSize); err != nil {
+			return err
+		}
+	}
+	if o.padTo != "" {
+		if err := im.PadTo(padTo, fo.Pad, fo.MaxSize); err != nil {
+			return err
+		}
 	}
 
 	var out []byte
@@ -333,9 +447,11 @@ func run(o *options, input string) error {
 		}
 		im.Entry, im.HasEntry = entry, hasEntry
 		if o.format == "srec" {
-			out, err = fwimg.EncodeSREC(im, cmp.Or(o.name, im.Name), 0)
+			out, err = fwimg.EncodeSRECOpts(im, fwimg.SRECOptions{
+				Name: cmp.Or(o.name, im.Name), AddrBits: srecBits, Count: o.srecCount, CRLF: o.crlf,
+			})
 		} else {
-			out, err = fwimg.EncodeIHEX(im, 0)
+			out, err = fwimg.EncodeIHEXOpts(im, fwimg.IHEXOptions{Mode: ihexMode, CRLF: o.crlf})
 		}
 	case "uimage":
 		out, err = uimage(o, im, src, arch, hasEntry, entry, fo)
@@ -354,7 +470,7 @@ type source struct {
 }
 
 // load builds the Image of an input of the given format.
-func load(format string, data []byte, fo fwimg.FlattenOptions, rawBase uint64, input string) (*source, error) {
+func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.SectionSelect, rawBase uint64, input string) (*source, error) {
 	var (
 		s   = &source{}
 		err error
@@ -365,11 +481,14 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, rawBase uint64, i
 		if ef, err = elfpatch.Parse(data); err != nil {
 			return nil, fmt.Errorf("%s: %w", input, err)
 		}
-		flat, base, err := fwimg.FlattenBytes(data, fo)
+		if len(sel.Only) > 0 || len(sel.Remove) > 0 {
+			s.img, err = fwimg.ELFSections(data, sel, fo)
+		} else {
+			s.img, err = fwimg.ELFImage(data, fo)
+		}
 		if err != nil {
 			return nil, err
 		}
-		s.img = &fwimg.Image{Segments: []fwimg.Segment{{Addr: base, Data: flat}}, Entry: ef.Entry, HasEntry: true}
 		s.elf, s.machine = true, ef.Machine
 	case fwimg.FormatIHEX:
 		s.img, err = fwimg.DecodeIHEX(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})

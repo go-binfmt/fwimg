@@ -139,13 +139,14 @@ func TestInputs_EntryAndName(t *testing.T) {
 	if !strings.Contains(string(get(t, o)), ":0400000500000104F2") {
 		t.Errorf("no type 05 record:\n%s", get(t, o))
 	}
-	// An ELF to ihex still has no start record (v0.2.1).
+	// An ELF to ihex carries its start address as a type 05 record (since
+	// v0.4.0; v0.2.1 left it out).
 	e := simple(t)
 	if _, _, err := runCmd(t, "-O", "ihex", "-o", o, e); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(get(t, o)), ":04000005") {
-		t.Errorf("an ELF's start address is written to ihex:\n%s", get(t, o))
+	if !strings.Contains(string(get(t, o)), ":04000005") {
+		t.Errorf("an ELF's start address is not written to ihex:\n%s", get(t, o))
 	}
 	// --entry gives an ELF's ihex one.
 	if _, _, err := runCmd(t, "-O", "ihex", "--entry", "0x80004", "-o", o, e); err != nil {
@@ -344,15 +345,18 @@ func TestUImageHeaderCRCsHoldAfterConversion(t *testing.T) {
 	}
 }
 
-func TestInputs_ELFEntryAbove32BitsIsRefusedForSRECAndIHEXOnlyWhenWritten(t *testing.T) {
+func TestInputs_ELFEntryAbove32BitsIsRefusedForSRECAndIHEXUnlessGiven(t *testing.T) {
 	in := writeELF(t, elf.EM_X86_64, 0xffffffff80001000, elfgen.Seg{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")})
 	o := out(t)
 	if _, _, err := runCmd(t, "-O", "srec", "-o", o, in); err == nil || !strings.Contains(err.Error(), "ELF entry") {
 		t.Errorf("srec: %v", err)
 	}
-	// ihex writes no start record for an ELF, so there is nothing to refuse.
-	if _, _, err := runCmd(t, "-O", "ihex", "-o", o, in); err != nil {
+	// ihex writes the start record since v0.4.0, so it refuses the same way.
+	if _, _, err := runCmd(t, "-O", "ihex", "-o", o, in); err == nil || !strings.Contains(err.Error(), "ELF entry") {
 		t.Errorf("ihex: %v", err)
+	}
+	if _, _, err := runCmd(t, "-O", "ihex", "--entry", "0x1000", "-o", o, in); err != nil {
+		t.Errorf("ihex with --entry: %v", err)
 	}
 	if _, _, err := runCmd(t, "-O", "srec", "--entry", "0x1000", "-o", o, in); err != nil {
 		t.Errorf("srec with --entry: %v", err)
