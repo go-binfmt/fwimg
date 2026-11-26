@@ -301,8 +301,7 @@ func TestInfo(t *testing.T) {
 		want string
 		code int
 	}{
-		"not a uimage":    {[]string{"info", put(t, "x", []byte("nope"))}, "and this is not a format fwimg recognises", 1},
-		"an ihex file":    {[]string{"info", ihexFile(t, 0, "a")}, "a ihex file", 1},
+		"not a format":    {[]string{"info", put(t, "x", []byte("nope"))}, "a raw binary is read only with -I binary", 1},
 		"data CRC":        {[]string{"info", put(t, "bad", bad)}, "checksum", 1},
 		"bad multi table": {[]string{"info", truncMulti}, "size table", 1},
 		"missing":         {[]string{"info", filepath.Join(t.TempDir(), "absent")}, "no such file", 1},

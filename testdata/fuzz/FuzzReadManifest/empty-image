@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\n  \"$schema\": \"https://go-binfmt.github.io/fwimg/manifest-1.schema.json\",\n  \"schema_version\": 1,\n  \"fwimg_version\": \"v0.6.0\",\n  \"format\": \"binary\",\n  \"base\": \"0x0\",\n  \"entry\": null,\n  \"pad\": 0,\n  \"size\": 0,\n  \"data_size\": 0,\n  \"crc32\": \"00000000\",\n  \"sha256\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\n  \"segments\": []\n}\n")

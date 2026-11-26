@@ -100,7 +100,46 @@ fwimg -O uimage --time 1700000000 --load 0x80000 -o uImage fw.elf
   mkimage uses the input file's mtime instead, which is the one documented
   difference.
 
-The library is `github.com/go-binfmt/fwimg`: `Flatten`, `SREC`, `IHEX`,
+## Manifest, info and verify (v0.6.0)
+
+```
+fwimg -O ihex --manifest fw.json -o fw.hex fw.elf        # the image, described
+fwimg info fw.hex                                        # any input: format, start, ranges, hashes
+fwimg info --json fw.elf                                 # the same facts, as a manifest
+fwimg verify --manifest fw.json fw.hex                   # re-read an image, check every hash
+fwimg verify --manifest fw.json -I binary --base 0x8000000 fw.bin
+```
+
+* **The manifest** is JSON with a fixed key order: `format`, `base`, `entry`
+  (null without one), `pad`, `size`, `data_size`, the CRC-32 and SHA-256 of the
+  whole image, and per segment (and per `--region`) its address, size,
+  `source` (the input file) and both hashes. An ELF input also lists its
+  allocated sections. A uImage output adds its header fields. The same input
+  and options give the same bytes: there is **no timestamp** unless
+  `SOURCE_DATE_EPOCH` is set, then `created` is that time in UTC.
+* **Addresses are strings** (`"0x8000000"`, lowercase hex) because a JSON number
+  cannot hold 64 bits; sizes are integers. The hashes cover the flat image
+  from `base`, the gaps filled with `pad`, which is what `-O binary` writes.
+* **The schema** is `schema/manifest-1.schema.json`, JSON Schema 2020-12, with
+  `additionalProperties: false` everywhere, published at
+  `https://go-binfmt.github.io/fwimg/manifest-1.schema.json` and embedded in
+  the library as `fwimg.ManifestSchema`. A change that is not backward
+  compatible makes `manifest-2`; `schema_version` says which one a file is.
+* **`info`** reads ELF, Intel HEX, S-record, uImage or (`-I binary --base`) a
+  raw file. A uImage is listed exactly as `mkimage -l` does; the others print
+  the manifest's facts as text, or as JSON with `--json`.
+* **`verify`** recomputes from the image's bytes, in whatever format it is in,
+  the base, size, start address and the hashes of the whole image and of every
+  segment and region. A manifest written for the S-record checks the flat
+  binary of the same image. `data_size` is not compared (a flat binary counts
+  its padding). Every difference is listed; exit status 1 on any. The start
+  address is compared only if the image has one.
+* A manifest is read with a size bound (16 MiB, 65536 entries per list), unknown keys are refused, and
+  the reader is fuzzed (`FuzzReadManifest`).
+
+The library is `github.com/go-binfmt/fwimg`: `NewManifest`, `ReadManifest`,
+`(*Manifest).JSON` and `Verify`, `ELFManifestSections`, `UImageStored`, and
+`Flatten`, `SREC`, `IHEX`,
 `UImage`, the L2 additions `ELFImage`, `ELFSections` (with `SectionSelect`),
 `EncodeSRECOpts` and `EncodeIHEXOpts`, with `Image.GapFill`, `PadTo` and
 `Offset`; the readers `DecodeIHEX`, `DecodeSREC`, `ParseUImage`, `RawImage`
@@ -177,6 +216,11 @@ and Intel HEX (objcopy mode) files are compared with objcopy's byte for byte
 `--pad-to`, `-j` and `-R` with wildcards and `!`, `--change-addresses`,
 `--adjust-vma`, `--set-start` and `--change-start`; the S5 count and the linear
 Intel HEX are compared with srec_cat's.
+
+`l4_differential_test.go` compares a manifest's ranges and start address with
+`srec_info` (Motorola and Intel files), and a file srec_cat rewrites still
+matches the manifest. `fwimg info` of a uImage prints `Listing`, which is the
+`mkimage -l` comparison above.
 
 CI installs `gcc binutils srecord u-boot-tools` and sets `FWIMG_REQUIRE_DIFF`, so a missing
 tool is a failure and not a skip; elsewhere the lane skips with the reason stated.

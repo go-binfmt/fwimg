@@ -198,15 +198,27 @@ func (h *UImageHeader) Listing(components [][]byte) string {
 // with the entry point, the name and the header. A compressed payload is
 // refused (ErrFormat): the loader decompresses it, and this reader does not.
 func UImageImage(data []byte) (*Image, error) {
-	h, payload, err := ParseUImage(data)
+	im, err := UImageStored(data)
 	if err != nil {
 		return nil, err
 	}
+	h := im.UImage
 	if h.Comp != CompNone {
 		return nil, fmt.Errorf("uimage: %w: the payload is %s compressed", ErrFormat, nameOr(uimageComp, h.Comp, "unknown"))
 	}
 	if h.Type == TypeMulti {
 		return nil, fmt.Errorf("uimage: %w: a multi-file image has no single load image", ErrFormat)
+	}
+	return im, nil
+}
+
+// UImageStored is the Image of a uImage's payload as it is stored, at the load
+// address: compressed or multi-file or not. It is what a manifest describes and
+// `fwimg info` lists; UImageImage is the one a conversion starts from.
+func UImageStored(data []byte) (*Image, error) {
+	h, payload, err := ParseUImage(data)
+	if err != nil {
+		return nil, err
 	}
 	// A 32-bit load address and a payload of at most 32 bits cannot pass 2^64.
 	im, _ := RawImage(payload, uint64(h.Load))
