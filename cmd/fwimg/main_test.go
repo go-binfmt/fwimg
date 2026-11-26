@@ -312,7 +312,14 @@ func TestWriteOutputReplacesExisting(t *testing.T) {
 	if err := os.WriteFile(out, bytes.Repeat([]byte("x"), 100), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := os.Stat(out)
+	// Held open, the old file keeps its inode number: a freed one could be
+	// handed to the new file.
+	held, err := os.Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	before, _ := held.Stat()
 	if _, _, err := runCmd(t, "-o", out, simple(t)); err != nil {
 		t.Fatal(err)
 	}
