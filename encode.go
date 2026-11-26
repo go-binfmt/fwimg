@@ -27,6 +27,10 @@ type SRECOptions struct {
 	CRLF bool
 }
 
+// maxS6 is the largest record count an S6 record holds (24 bits). It is a
+// variable only so a test can lower it: the real limit is 16 million records.
+var maxS6 uint64 = 0xff_ffff
+
 func (o SRECOptions) eol() string { return eol(o.CRLF) }
 
 func eol(crlf bool) string {
@@ -126,10 +130,10 @@ func EncodeSRECOpts(im *Image, o SRECOptions) ([]byte, error) {
 		switch {
 		case records <= 0xffff:
 			out = srecLine(out, '5', uint32(records), nil, nl)
-		case records <= 0xff_ffff:
+		case records <= maxS6:
 			out = srecLine(out, '6', uint32(records), nil, nl)
 		default:
-			return nil, fmt.Errorf("%w: %d data records, an S6 count holds 16777215", ErrFormat, records)
+			return nil, fmt.Errorf("%w: %d data records, an S6 count holds %d", ErrFormat, records, maxS6)
 		}
 	}
 	return srecLine(out, byte('0'+10-int(dataType-'0')), uint32(entry), nil, nl), nil

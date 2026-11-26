@@ -30,10 +30,10 @@ func fillBytes(n uint64, pad byte) []byte {
 	return b
 }
 
-// GapFill extends every segment up to the start of the next one with pad, as
+// GapFill fills every gap between two segments with pad, as
 // `objcopy --gap-fill` does: the output then holds the filled gap as data
-// (text formats otherwise leave it out). The segments stay separate, since
-// objcopy writes its records per section. The bytes added in all may not pass
+// (text formats otherwise leave it out). The fill is a segment of its own,
+// since objcopy writes its records per section. The bytes added in all may not pass
 // maxSize (zero means DefaultMaxSize): a larger fill is refused with
 // ErrTooLarge before anything is allocated. The segments must be sorted and
 // disjoint, as every constructor in this package makes them.
@@ -48,17 +48,21 @@ func (im *Image) GapFill(pad byte, maxSize uint64) error {
 			}
 		}
 	}
-	for i := 0; i+1 < len(im.Segments); i++ {
-		s := &im.Segments[i]
-		if next := im.Segments[i+1].Addr; next > s.End() {
-			s.Data = append(slices.Clip(s.Data), fillBytes(next-s.End(), pad)...)
+	out := make([]Segment, 0, len(im.Segments)*2)
+	for i, s := range im.Segments {
+		out = append(out, s)
+		if i+1 < len(im.Segments) {
+			if next := im.Segments[i+1].Addr; next > s.End() {
+				out = append(out, Segment{Addr: s.End(), Data: fillBytes(next-s.End(), pad)})
+			}
 		}
 	}
+	im.Segments = out
 	return nil
 }
 
-// PadTo extends the last segment with pad up to addr, as `objcopy --pad-to`
-// does. An image that already ends at or past addr, or an empty one, is left
+// PadTo appends a segment of pad bytes after the last one, up to addr, as
+// `objcopy --pad-to` does (a section of its own, so records are not merged). An image that already ends at or past addr, or an empty one, is left
 // as it is. The bytes added may not pass maxSize (zero means DefaultMaxSize):
 // ErrTooLarge.
 func (im *Image) PadTo(addr uint64, pad byte, maxSize uint64) error {
@@ -73,7 +77,7 @@ func (im *Image) PadTo(addr uint64, pad byte, maxSize uint64) error {
 	if addr-end > maxFill(maxSize) {
 		return fmt.Errorf("%w: padding to 0x%x adds %d bytes, limit %d", ErrTooLarge, addr, addr-end, maxFill(maxSize))
 	}
-	s.Data = append(slices.Clip(s.Data), fillBytes(addr-end, pad)...)
+	im.Segments = append(im.Segments, Segment{Addr: end, Data: fillBytes(addr-end, pad)})
 	return nil
 }
 
