@@ -8,7 +8,7 @@ holds the facts each oracle rests on, with the source line they were read
 from. Every decoder is fuzzed with a committed corpus; every bomb test asserts
 a refusal under `GOMEMLIMIT`.
 
-Starting point: v0.2.1 — ELF in; flat binary, SREC (S3), Intel HEX (type 04),
+Starting point (L1 changes the input side): v0.2.1 — ELF in; flat binary, SREC (S3), Intel HEX (type 04),
 legacy uImage (no compression) out.
 
 | Lot | Subject | Reference (oracle) | Release |
@@ -21,7 +21,7 @@ legacy uImage (no compression) out.
 | L6 | wasm build, docs playground | the native CLI (same bytes) | v0.8.0 |
 | L7 | FIT, on a new `go-binfmt/fdt` | `dtc`/libfdt, `mkimage -f`/`-E`, `dumpimage` | fdt v0.1.0, fwimg v0.9.0 |
 
-## L1 — input (v0.3.0)
+## L1 — input (v0.3.0, shipped)
 
 - Raw binary input with `--base ADDR` (objcopy's `-I binary` needs the
   address supplied the same way).

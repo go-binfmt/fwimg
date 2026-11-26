@@ -64,6 +64,25 @@ var ops = []op{
 		}},
 }
 
+// decodeOps read a text file (Intel HEX, S-records) back to a flat binary:
+// the input side. The text is made once per fixture by objcopy from the ELF,
+// and both programs read that same file.
+var decodeOps = []struct {
+	kind string
+	op
+}{
+	{"ihex", op{"-I ihex -O binary",
+		func(t tools, in, _, out string) []string {
+			return []string{t.objcopy, "-I", "ihex", "-O", "binary", in, out}
+		},
+		func(in, out string) []string { return []string{"-I", "ihex", "-O", "binary", "-o", out, in} }}},
+	{"srec", op{"-I srec -O binary",
+		func(t tools, in, _, out string) []string {
+			return []string{t.objcopy, "-I", "srec", "-O", "binary", in, out}
+		},
+		func(in, out string) []string { return []string{"-I", "srec", "-O", "binary", "-o", out, in} }}},
+}
+
 // run is main without the process: arguments, output and the fixture builder
 // are parameters so a test can drive it with stand-in tools.
 func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) error {
@@ -117,7 +136,22 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 		if b, err := exec.Command(t.fwimg, "-O", "binary", "-o", flat, f.path).CombinedOutput(); err != nil {
 			return fmt.Errorf("fwimg on %s: %v: %s", f.name, err, b)
 		}
+		type row struct {
+			op
+			src string
+		}
+		var rows []row
 		for _, o := range ops {
+			rows = append(rows, row{o, f.path})
+		}
+		for _, d := range decodeOps {
+			text := filepath.Join(dir, "in."+d.kind)
+			if b, err := exec.Command(t.objcopy, "-O", d.kind, f.path, text).CombinedOutput(); err != nil {
+				return fmt.Errorf("objcopy -O %s on %s: %v: %s", d.kind, f.name, err, b)
+			}
+			rows = append(rows, row{d.op, text})
+		}
+		for _, o := range rows {
 			var tr, to []time.Duration
 			for r := 0; r < *rounds; r++ {
 				order := []bool{false, true} // true = fwimg
@@ -127,9 +161,9 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 				for _, ours := range order {
 					var argv []string
 					if ours {
-						argv = append([]string{t.fwimg}, o.ours(f.path, out)...)
+						argv = append([]string{t.fwimg}, o.ours(o.src, out)...)
 					} else {
-						argv = o.ref(t, f.path, flat, out)
+						argv = o.ref(t, o.src, flat, out)
 					}
 					d, err := timeOne(argv)
 					if err != nil {

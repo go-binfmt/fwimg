@@ -41,8 +41,21 @@ func TestRunTable(t *testing.T) {
 	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", tr, "-rounds", "2"}, &w, mk); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(w.String(), "| fx |"); n != len(ops) {
-		t.Errorf("%d rows, want %d:\n%s", n, len(ops), w.String())
+	if n := strings.Count(w.String(), "| fx |"); n != len(ops)+len(decodeOps) {
+		t.Errorf("%d rows, want %d:\n%s", n, len(ops)+len(decodeOps), w.String())
+	}
+	for _, want := range []string{"`-I ihex -O binary`", "`-I srec -O binary`"} {
+		if !strings.Contains(w.String(), want) {
+			t.Errorf("no row %s in:\n%s", want, w.String())
+		}
+	}
+	// objcopy failing to make the text the decoders read names the format.
+	stub := filepath.Join(t.TempDir(), "objcopy")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\ncase \"$*\" in *\"-O srec\"*) exit 1;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-objcopy", stub, "-mkimage", tr, "-fwimg", tr, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "-O srec on fx") {
+		t.Errorf("err = %v, want the text step named", err)
 	}
 	bad := func(string) ([]fixture, error) { return nil, errors.New("no gcc") }
 	if err := run([]string{"-rounds", "1"}, &w, bad); err == nil || !strings.Contains(err.Error(), "no gcc") {
@@ -224,6 +237,15 @@ func TestOpsBuildArgv(t *testing.T) {
 		}
 		if got := o.ours("in.elf", "out"); got[len(got)-1] != "in.elf" {
 			t.Errorf("%s: fwimg argv %v does not end with the input", o.name, got)
+		}
+	}
+	for _, d := range decodeOps {
+		ref := d.ref(tl, "in."+d.kind, "", "out")
+		if ref[0] != "objcopy" || ref[2] != d.kind || ref[len(ref)-2] != "in."+d.kind {
+			t.Errorf("%s: reference argv %v", d.name, ref)
+		}
+		if got := d.ours("in."+d.kind, "out"); got[1] != d.kind || got[len(got)-1] != "in."+d.kind {
+			t.Errorf("%s: fwimg argv %v", d.name, got)
 		}
 	}
 }

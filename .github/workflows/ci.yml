@@ -14,11 +14,12 @@ jobs:
       # The differential lane needs the reference tools and a compiler. It is
       # REQUIRED here: FWIMG_REQUIRE_DIFF turns its skip into a failure, so a
       # runner image that loses u-boot-tools cannot turn the lane into a green tick.
-      - name: reference tools (objcopy, mkimage, gcc)
+      - name: reference tools (objcopy, srec_cat, mkimage, gcc)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
           objcopy --version
+          srec_cat -version
           mkimage -V
       - run: go vet ./...
       - name: gofmt
@@ -43,7 +44,7 @@ jobs:
       - name: reference tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
       - name: go test (GOARCH=386)
         env: { GOARCH: '386', CGO_ENABLED: '0', FWIMG_REQUIRE_DIFF: "1" }
         run: go test -count=1 ./...
@@ -56,6 +57,12 @@ jobs:
         with: { go-version: '1.27.4' }
       - name: fuzz FuzzFlatten for 60 seconds
         run: go test -run '^$' -fuzz '^FuzzFlatten$' -fuzztime 60s .
+      - name: fuzz FuzzIHEX for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzIHEX$' -fuzztime 60s .
+      - name: fuzz FuzzSREC for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzSREC$' -fuzztime 60s .
+      - name: fuzz FuzzUImage for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzUImage$' -fuzztime 60s .
 
   # s390x is BIG-ENDIAN; the ELF parser and the encoders run under that byte
   # order here.
@@ -165,7 +172,7 @@ jobs:
         with: { go-version: '1.27.4' }
       - run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
       - run: |
           go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
           go build -o "$RUNNER_TEMP/hello" ./internal/floor/hello
