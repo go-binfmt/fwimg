@@ -92,6 +92,15 @@ func ParseUImage(data []byte) (*UImageHeader, []byte, error) {
 // padding after every file but the last, must fit in what is left of it
 // (ErrRange). Any other Type returns the payload as its one component.
 func (h *UImageHeader) Components(payload []byte) ([][]byte, error) {
+	if h.Type == TypeScript {
+		// mkimage wraps a script as a one-file table (size, 0, file), and
+		// prints it like a multi-file image; a script without that table is
+		// still a payload, returned whole.
+		if c, err := h.asMulti().Components(payload); err == nil {
+			return c, nil
+		}
+		return [][]byte{payload}, nil
+	}
 	if h.Type != TypeMulti {
 		return [][]byte{payload}, nil
 	}
@@ -123,6 +132,13 @@ func (h *UImageHeader) Components(payload []byte) ([][]byte, error) {
 	return out, nil
 }
 
+// asMulti is the header read as a multi-file one, for a script's table.
+func (h *UImageHeader) asMulti() *UImageHeader {
+	m := *h
+	m.Type = TypeMulti
+	return &m
+}
+
 // Names as U-Boot prints them (boot/image.c, the uimage_os, uimage_arch,
 // uimage_type and uimage_comp tables); a code not listed prints as U-Boot's
 // "Unknown ..." text.
@@ -132,7 +148,7 @@ var (
 	uimageArch = map[byte]string{0: "Invalid Architecture", 2: "ARM", 3: "Intel x86", 5: "MIPS", 7: "PowerPC",
 		22: "AArch64", 24: "AMD x86_64", 26: "RISC-V", 27: "LoongArch"}
 	uimageType = map[byte]string{0: "Invalid Image", 1: "Standalone Program", 2: "Kernel Image", 3: "RAMDisk Image",
-		4: "Multi-File Image", 5: "Firmware", 6: "Script", 7: "Filesystem Image (any type)", 8: "Flat Device Tree"}
+		4: "Multi-File Image", 5: "Firmware", 6: "Script", 7: "Filesystem Image", 8: "Flat Device Tree"}
 	uimageComp = map[byte]string{0: "uncompressed", 1: "gzip", 2: "bzip2", 3: "lzma", 4: "lzo", 5: "lz4", 6: "zstd"}
 )
 
@@ -156,13 +172,20 @@ func (h *UImageHeader) Listing(components [][]byte) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Image Name:   %s\n", h.Name)
 	fmt.Fprintf(&b, "Created:      %s\n", time.Unix(int64(h.Time), 0).UTC().Format("Mon Jan _2 15:04:05 2006"))
+	comp, known := uimageComp[h.Comp]
+	switch {
+	case !known:
+		comp = "Unknown Compression"
+	case h.Comp != CompNone:
+		comp += " compressed" // U-Boot: "(gzip compressed)", "(uncompressed)"
+	}
 	fmt.Fprintf(&b, "Image Type:   %s %s %s (%s)\n",
 		nameOr(uimageArch, h.Arch, "Unknown Architecture"), nameOr(uimageOS, h.OS, "Unknown OS"),
-		nameOr(uimageType, h.Type, "Unknown Image"), nameOr(uimageComp, h.Comp, "Unknown Compression"))
+		nameOr(uimageType, h.Type, "Unknown Image"), comp)
 	fmt.Fprintf(&b, "Data Size:    %s\n", sizeText(h.Size))
 	fmt.Fprintf(&b, "Load Address: %08x\n", h.Load)
 	fmt.Fprintf(&b, "Entry Point:  %08x\n", h.Entry)
-	if h.Type == TypeMulti {
+	if h.Type == TypeMulti || h.Type == TypeScript && len(components) > 0 {
 		b.WriteString("Contents:\n")
 		for i, c := range components {
 			fmt.Fprintf(&b, "   Image %d: %s\n", i, sizeText(uint32(len(c))))

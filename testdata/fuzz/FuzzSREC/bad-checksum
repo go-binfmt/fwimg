@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("S1040000AA50\nS9030000FC\n")

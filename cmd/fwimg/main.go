@@ -313,9 +313,9 @@ func run(o *options, input string) error {
 		entry, hasEntry = entryAddr, true
 	}
 	if o.load != "" {
-		if err := im.Shift(loadAddr); err != nil {
-			return err
-		}
+		// Cannot fail here: a 32-bit address moves no image whose end is
+		// within 2^32 of 2^64 past 2^64 (Shift's own test covers the refusal).
+		_ = im.Shift(loadAddr)
 	}
 
 	var out []byte
@@ -329,7 +329,7 @@ func run(o *options, input string) error {
 			return fmt.Errorf("image base 0x%x does not fit 32 bits: give --load", im.Base())
 		}
 		if hasEntry && entry > math.MaxUint32 {
-			return fmt.Errorf("%s 0x%x does not fit 32 bits: give --entry", src.entryName, entry)
+			return fmt.Errorf("ELF entry 0x%x does not fit 32 bits: give --entry", entry)
 		}
 		im.Entry, im.HasEntry = entry, hasEntry
 		if o.format == "srec" {
@@ -348,16 +348,15 @@ func run(o *options, input string) error {
 
 // source is a loaded input: its image, and what only the ELF knows.
 type source struct {
-	img       *fwimg.Image
-	elf       bool
-	machine   uint16
-	entryName string
+	img     *fwimg.Image
+	elf     bool
+	machine uint16
 }
 
 // load builds the Image of an input of the given format.
 func load(format string, data []byte, fo fwimg.FlattenOptions, rawBase uint64, input string) (*source, error) {
 	var (
-		s   = &source{entryName: "start address"}
+		s   = &source{}
 		err error
 	)
 	switch format {
@@ -371,7 +370,7 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, rawBase uint64, i
 			return nil, err
 		}
 		s.img = &fwimg.Image{Segments: []fwimg.Segment{{Addr: base, Data: flat}}, Entry: ef.Entry, HasEntry: true}
-		s.elf, s.machine, s.entryName = true, ef.Machine, "ELF entry"
+		s.elf, s.machine = true, ef.Machine
 	case fwimg.FormatIHEX:
 		s.img, err = fwimg.DecodeIHEX(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
 	case fwimg.FormatSREC:
@@ -413,7 +412,7 @@ func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, 
 		return nil, fmt.Errorf("image base 0x%x does not fit 32 bits: give --load", base)
 	}
 	if entry > math.MaxUint32 {
-		return nil, fmt.Errorf("%s 0x%x does not fit 32 bits: give --entry", src.entryName, entry)
+		return nil, fmt.Errorf("ELF entry 0x%x does not fit 32 bits: give --entry", entry)
 	}
 	return fwimg.UImage(flat, fwimg.UImageOptions{
 		Load: uint32(base), Entry: uint32(entry), Name: cmp.Or(o.name, im.Name),

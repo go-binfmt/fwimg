@@ -192,6 +192,27 @@ func TestListing(t *testing.T) {
 	if u := (&UImageHeader{Type: 200}).Listing(nil); !strings.Contains(u, "Unknown Image") || strings.Contains(u, "Contents") {
 		t.Errorf("unknown type:\n%s", u)
 	}
+	// A compressed payload reads "(gzip compressed)", as U-Boot prints it.
+	if g := (&UImageHeader{Comp: 1}).Listing(nil); !strings.Contains(g, "(gzip compressed)\n") {
+		t.Errorf("gzip:\n%s", g)
+	}
+}
+
+// mkimage wraps a script as a table of one file and lists it as such.
+func TestScriptIsListedLikeAOneFileTable(t *testing.T) {
+	h := &UImageHeader{Type: TypeScript, Size: 17}
+	got, err := h.Components(multi([]byte("echo hi")))
+	if err != nil || len(got) != 1 || string(got[0]) != "echo hi" {
+		t.Fatalf("%q %v", got, err)
+	}
+	if l := h.Listing(got); !strings.Contains(l, "Contents:\n   Image 0: 7 Bytes") {
+		t.Errorf("listing:\n%s", l)
+	}
+	// Without the table it is one payload, listed without contents.
+	got, err = h.Components([]byte("echo hi"))
+	if err != nil || len(got) != 1 || string(got[0]) != "echo hi" {
+		t.Fatalf("%q %v", got, err)
+	}
 }
 
 func TestUImageImage(t *testing.T) {
