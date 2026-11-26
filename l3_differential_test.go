@@ -181,11 +181,17 @@ SECTIONS {
 		t.Fatalf("ld linked 1500 bytes into 0x400:\n%s", msg)
 	}
 	re := regexp.MustCompile("region `FLASH' overflowed by ([0-9]+) bytes")
+	// ld words it "overflowed by N bytes" or, when the whole section does not
+	// fit, "will not fit in region" with no number (binutils 2.4x).
 	m := re.FindStringSubmatch(msg)
-	if m == nil {
+	var ldExcess uint64
+	if m != nil {
+		ldExcess, _ = strconv.ParseUint(m[1], 10, 64)
+	} else if !strings.Contains(msg, "will not fit in region `FLASH'") {
 		t.Fatalf("no overflow in ld's words:\n%s", msg)
+	} else {
+		t.Logf("ld gives no byte count:\n%s", msg)
 	}
-	ldExcess, _ := strconv.ParseUint(m[1], 10, 64)
 
 	// The same sections linked with no bound: fwimg measures the same excess.
 	elfPath, msg, err := link(t, "free", src, `ENTRY(_start)
@@ -214,7 +220,11 @@ SECTIONS {
 	if m == nil {
 		t.Fatalf("no overflow in ours:\n%v", err)
 	}
-	if ours, _ := strconv.ParseUint(m[1], 10, 64); ours != ldExcess {
+	ours, _ := strconv.ParseUint(m[1], 10, 64)
+	if end := im.Base() + uint64(im.Span()); ours != end-0x80400 {
+		t.Errorf("fwimg says %d bytes over, the image ends %d past the region\n%v", ours, end-0x80400, err)
+	}
+	if ldExcess != 0 && ours != ldExcess {
 		t.Errorf("fwimg says %d bytes over, ld says %d\n%v", ours, ldExcess, err)
 	}
 	// And the region that holds it is not refused.
