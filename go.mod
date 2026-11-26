@@ -3,7 +3,7 @@ module github.com/go-binfmt/fwimg
 go 1.27.4
 
 require (
-	github.com/go-binfmt/elfpatch v0.4.0
+	github.com/go-binfmt/elfpatch v0.5.0
 	github.com/spf13/cobra v1.10.2
 )
 
