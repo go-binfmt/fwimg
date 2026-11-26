@@ -218,7 +218,7 @@ func (l *Layout) hint(lo, hi uint64) string {
 	if len(names) == 0 {
 		names = []string{"-R SECTION"}
 	}
-	return "both addresses agree, so two parts are linked far apart (a .data at its RAM address with no AT> into flash): link the far one AT> next to the rest, or leave it out of the file with " + strings.Join(names, " ")
+	return "two parts are linked far apart whichever address is used (a .data at its RAM address with no AT> into flash): link the far one AT> next to the rest, or leave it out of the file with " + strings.Join(names, " ")
 }
 
 // --- memory regions -----------------------------------------------------------

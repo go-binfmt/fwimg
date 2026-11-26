@@ -260,8 +260,10 @@ if `gmtime()` rejects it, mkimage prints "SOURCE_DATE_EPOCH is not valid" and
 uses **0**. The FIT path calls the same function (fit_image.c 145).
 
 fwimg v0.2.1 writes `Time` from the caller, default 0 (`fwimg.go`
-`UImageOptions`). L3 adds `SOURCE_DATE_EPOCH` with mkimage's precedence but
-**refuses** an unparsable value instead of silently writing 0.
+`UImageOptions`). Since v0.5.0 the CLI reads `SOURCE_DATE_EPOCH` with
+mkimage's precedence (`--time` first, then the variable) but **refuses** an
+unparsable value instead of silently writing 0. Unset, the time stays 0, where
+mkimage uses the input mtime: the one documented difference.
 
 ### 5.5 Listing
 

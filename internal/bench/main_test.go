@@ -41,8 +41,21 @@ func TestRunTable(t *testing.T) {
 	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", tr, "-rounds", "2"}, &w, mk); err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(w.String(), "| fx |"); n != len(ops)+len(decodeOps) {
-		t.Errorf("%d rows, want %d:\n%s", n, len(ops)+len(decodeOps), w.String())
+	// One row per operation in the main table and one per operation in the
+	// table of what the check of the output costs.
+	if n := strings.Count(w.String(), "| fx |"); n != 2*len(ops)+len(decodeOps) {
+		t.Errorf("%d rows, want %d:\n%s", n, 2*len(ops)+len(decodeOps), w.String())
+	}
+	if !strings.Contains(w.String(), "| file | operation | --no-verify | verified | cost |") {
+		t.Errorf("no table of the cost of the check:\n%s", w.String())
+	}
+	// ... and a run that fails only when asked not to verify fails in that table.
+	nv := filepath.Join(t.TempDir(), "fwimg")
+	if err := os.WriteFile(nv, []byte("#!/bin/sh\ncase \"$*\" in *--no-verify*) exit 1;; esac\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", nv, "-rounds", "1"}, &w, mk); err == nil || !strings.Contains(err.Error(), "-O binary on fx") {
+		t.Errorf("a failing --no-verify run: %v", err)
 	}
 	for _, want := range []string{"`-I ihex -O binary`", "`-I srec -O binary`"} {
 		if !strings.Contains(w.String(), want) {

@@ -15,7 +15,7 @@ legacy uImage (no compression) out.
 |---|---|---|---|
 | L1 | Input | `objcopy -I ihex/srec/binary -O binary`, `mkimage -l`, `dumpimage` | v0.3.0 |
 | L2 | Output completeness | `objcopy`, `srec_cat` | v0.4.0 |
-| L3 | Safety | `objcopy` (gap), `ld` (regions), `srec_cmp` (verify), `mkimage` (epoch) | v0.5.0 |
+| L3 | Safety (done) | `objcopy` (gap), `ld` (regions), `srec_cmp` (verify), `mkimage` (epoch) | v0.5.0 |
 | L4 | Manifest and `fwimg info` | `sha256sum`, `crc32` (Go `hash/crc32` IEEE), `mkimage -l`, `srec_info` | v0.6.0 |
 | L5 | uImage compression, UF2, Verilog | `mkimage -C`, `gzip -d`/`lz4 -d`, `uf2conv.py`, `objcopy -O verilog` | v0.7.0 |
 | L6 | wasm build, docs playground | the native CLI (same bytes) | v0.8.0 |
@@ -67,12 +67,13 @@ headers).
 address mode and line endings, which the sources showed are needed for
 byte-equal oracles.
 
-## L3 — safety (v0.5.0)
+## L3 — safety (v0.5.0, shipped)
 
 - Gap diagnosis: when the output spans more than the bytes it holds, name
   the segments and sections on each side of the largest gap and say whether
   LMA ≠ VMA caused it. objcopy only warns on a negative offset (§1.2).
-- `--region NAME:ORIGIN:LENGTH` (repeatable) fit check, with ld's message
+  `--gap-warn N` warns below the refusal threshold.
+- `--region NAME=START:SIZE` (repeatable) fit check, with ld's message
   shape ("region `X' overflowed by N bytes", §1.3) — ld is the oracle on a
   linker script with the same `MEMORY`.
 - Verify-after-write: decode what was written with the L1 decoders and
@@ -81,6 +82,8 @@ byte-equal oracles.
   §5.4). fwimg refuses an unparsable value where mkimage writes 0; with it
   unset, fwimg keeps its deterministic 0 unless `--time` is given (mkimage
   uses the input mtime) — this divergence is documented.
+- Verify is on by default (`--no-verify` opts out); the write is unlink then
+  create, and a mismatch leaves no file.
 
 **Change from the brief:** SOURCE_DATE_EPOCH is reclassified from "the
 reference does not do it" to parity (claim f is false).
