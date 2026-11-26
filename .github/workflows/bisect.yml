@@ -5,6 +5,8 @@
 # more than 1x means fwimg is faster. Run it by hand.
 name: bisect
 on:
+  push:
+    branches: [perf-regress]
   workflow_dispatch:
     inputs:
       tags:
@@ -29,8 +31,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gcc binutils
       - env:
-          TAGS: ${{ inputs.tags }}
-          ROUNDS: ${{ inputs.rounds }}
+          TAGS: ${{ inputs.tags || 'v0.1.0 v0.2.1 v0.3.0 v0.4.0' }}
+          ROUNDS: ${{ inputs.rounds || '200' }}
         run: |
           set -e
           go build -o "$RUNNER_TEMP/bench" ./internal/bench
