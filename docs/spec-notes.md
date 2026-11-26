@@ -406,6 +406,27 @@ a compressed payload prints `(gzip compressed)`, an uncompressed one
 
 ---
 
+## 9b. L2 encoders: decisions and what the oracles showed
+
+Differential tests: `differential_l2_test.go`, objcopy 2.44 and srecord 1.64.
+
+| Case | Decision | Why |
+|---|---|---|
+| Intel HEX address mode | `linear` (default, type 04 + 05, as srec_cat) or `objcopy` (type 02 below 1 MiB, 04 above, 03/05 start) | the references disagree (§2.2–2.3); each mode is byte-equal to its tool (`-line-length=43` for srec_cat's 16 data bytes) |
+| Start record | written when the entry is non-zero: type 05, or type 03 `[(a&0xf0000)>>12, 0, a>>8, a]` for `objcopy` mode and an address up to `0xfffff` | read from ihex.c; the default `objcopy -O ihex` output matches byte for byte |
+| S-record width | `--srec-addr-len` 16/24/32/auto: S1/S9, S2/S8, S3/S7 | objcopy picks by the highest address; srec_cat `-address-length=2` gives S1/S9 (checked) |
+| S5/S6 count | opt-in (`--srec-count`); S5 up to 65535 records, S6 above | srec_cat writes S5 by default, objcopy never; compared with srec_cat |
+| Entry that does not fit the width | refused, `ErrAddrOverflow` | the terminator field would truncate it |
+| `--gap-fill`, `--pad-to` | the fill is a segment of its own | objcopy writes records per section: merging the fill into the neighbour changes where the last short record ends (found by the byte comparison) |
+| `-j` and `-R` together | refused | objcopy calls it undefined |
+| `-j` / `-R` patterns | `*` and `?`; `!` makes a pattern negative and a negative always wins | objcopy's `-j !x` semantics; compared with objcopy |
+| `--change-addresses` / `--adjust-vma` / `--change-start` | the last of them on the command line sets the start-address increment; the first two also move the segments | objcopy's option handling |
+| Section load address | the virtual address moved by the offset of the segment that holds the bytes, else `sh_addr` | objcopy's LMA; `--use-vaddr` takes `sh_addr` |
+| Line ending | LF by default, `--crlf` for CR LF | both references write CRLF; the default is unchanged from v0.3.0 so existing output is stable |
+| S0 header text | not compared | objcopy takes it from the output file name |
+
+---
+
 ## 10. "The reference does not do X" — verdicts
 
 | Claim | Verdict | Evidence |

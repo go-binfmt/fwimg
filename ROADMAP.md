@@ -37,7 +37,15 @@ legacy uImage (no compression) out.
   multi-file images with the size table **bounded by `ih_size`** (U-Boot's
   own loop is not, spec-notes §5.3). Field values against `mkimage -l`.
 
-## L2 — output completeness (v0.4.0)
+## L2 — output completeness (v0.4.0, shipped)
+
+Shipped as planned below, with these decisions (spec-notes §9b): the default
+address mode stays `linear`; the default line ending stays LF (`--crlf` makes
+the output byte-equal to both references); an ELF's entry is now written to
+Intel HEX (type 05, or type 03 in objcopy mode), where v0.2.1 to v0.3.0
+dropped it; `--gap-fill` and `--pad-to` add a segment of their own, because
+objcopy writes its records per section. Needs elfpatch v0.5.0 (section
+headers).
 
 - Intel HEX: type 05 (and type 03) start records; an **address mode**
   option, because the references disagree (spec-notes §2.2–2.3): objcopy
