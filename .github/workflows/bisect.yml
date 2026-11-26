@@ -2,11 +2,11 @@
 # One job builds every tag and the checked-out commit, then times them against
 # objcopy in the SAME interleaved rounds, single core, on the 4 MiB and 32 MiB
 # fixtures. Ratio convention as in the README: objcopy time / fwimg time, so
-# more than 1x means fwimg is faster. Run it by hand.
+# more than 1x means fwimg is faster. Run it by hand (workflow_dispatch); the
+# `phases` job times the steps of one process, and the system calls, at 4 and
+# 32 MiB.
 name: bisect
 on:
-  push:
-    branches: [phases-large]
   workflow_dispatch:
     inputs:
       tags:
