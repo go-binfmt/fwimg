@@ -2,11 +2,11 @@
 # One job builds every tag and the checked-out commit, then times them against
 # objcopy in the SAME interleaved rounds, single core, on the 4 MiB and 32 MiB
 # fixtures. Ratio convention as in the README: objcopy time / fwimg time, so
-# more than 1x means fwimg is faster. Run it by hand.
+# more than 1x means fwimg is faster. Run it by hand (workflow_dispatch); the
+# `phases` job times the steps of one process, and the system calls, at 4 and
+# 32 MiB.
 name: bisect
 on:
-  push:
-    branches: [perf-regress]
   workflow_dispatch:
     inputs:
       tags:
@@ -55,4 +55,37 @@ jobs:
             echo "## $f.elf, -O binary" | tee -a "$GITHUB_STEP_SUMMARY"
             cmds_for "$f" "$RUNNER_TEMP/$f.elf"
             taskset -c 0 "$RUNNER_TEMP/startup" -rounds "$ROUNDS" "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+  # Where the time of a 4 MiB and a 32 MiB `-O binary` goes (go-binfmt/fwimg#17):
+  # the phases of one cold process, the system calls of fwimg and objcopy side
+  # by side, and the timing against objcopy.
+  phases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc binutils strace
+      - run: |
+          set -e
+          go build -o "$RUNNER_TEMP/bench" ./internal/bench
+          go build -o "$RUNNER_TEMP/phases" ./internal/phases
+          go build -o "$RUNNER_TEMP/startup" ./internal/startup
+          go build -o "$RUNNER_TEMP/syscalls" ./internal/syscalls
+          go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
+          for i in 1 2; do
+            "$RUNNER_TEMP/bench" -write-small "$RUNNER_TEMP/in$i.elf" -fixture $i
+            echo "## fixture $i" | tee -a "$GITHUB_STEP_SUMMARY"
+            taskset -c 0 "$RUNNER_TEMP/phases" -rounds 40 -input "$RUNNER_TEMP/in$i.elf" | tee -a "$GITHUB_STEP_SUMMARY"
+            mkdir "$RUNNER_TEMP/tr$i"
+            "$RUNNER_TEMP/syscalls" -dir "$RUNNER_TEMP/tr$i" \
+              -cmd "objcopy=objcopy -O binary $RUNNER_TEMP/in$i.elf $RUNNER_TEMP/s1" \
+              -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/s2 $RUNNER_TEMP/in$i.elf" | tee -a "$GITHUB_STEP_SUMMARY"
+            for f in "$RUNNER_TEMP"/tr$i/*.trace; do echo "=== $f"; cat "$f"; done
+            taskset -c 0 "$RUNNER_TEMP/startup" -rounds 200 \
+              -cmd "objcopy=objcopy -O binary $RUNNER_TEMP/in$i.elf $RUNNER_TEMP/o1" \
+              -cmd "fwimg=$RUNNER_TEMP/fwimg -O binary -o $RUNNER_TEMP/o2 $RUNNER_TEMP/in$i.elf" | tee -a "$GITHUB_STEP_SUMMARY"
           done

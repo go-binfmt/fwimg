@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-binfmt/fwimg"
+	"github.com/go-binfmt/fwimg/internal/elfgen"
 )
 
 // The test binary stands in for the command: run starts os.Args[0] with -once,
@@ -33,6 +37,21 @@ func TestRunTable(t *testing.T) {
 		if !strings.Contains(w.String(), "| "+p+" |") {
 			t.Errorf("no row for %s in:\n%s", p, w.String())
 		}
+	}
+}
+
+func TestRunInput(t *testing.T) {
+	t.Setenv("PHASES_AS_COMMAND", "1")
+	in := filepath.Join(t.TempDir(), "big.elf")
+	if err := os.WriteFile(in, fixture(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	if err := run([]string{"-rounds", "1", "-input", in}, &w, os.Args[0]); err != nil || !strings.Contains(w.String(), "big.elf") {
+		t.Errorf("-input: %v\n%s", err, w.String())
+	}
+	if err := run([]string{"-rounds", "1", "-input", in + ".none"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "big.elf.none") {
+		t.Error("a missing -input was accepted")
 	}
 }
 
@@ -85,14 +104,25 @@ func TestOnceRefusals(t *testing.T) {
 	if err := os.WriteFile(junk, []byte("not an elf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	far := filepath.Join(dir, "far.elf")
+	if err := os.WriteFile(far, elfgen.Build(elf.EM_AARCH64, 0x80000, []elfgen.Seg{
+		{Paddr: 0x80000, Vaddr: 0x80000, Off: 0x400, Filesz: 1, Memsz: 1, Data: []byte{1}},
+		{Paddr: 0x80000 + 1<<30, Vaddr: 0x80000 + 1<<30, Off: 0x600, Filesz: 1, Memsz: 1, Data: []byte{2}},
+	}), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct{ name, in, out, want string }{
+		{"span over the limit", far, filepath.Join(dir, "o"), "write: " + fwimg.ErrTooLarge.Error()},
 		{"no input", filepath.Join(dir, "none"), filepath.Join(dir, "o"), "read"},
 		{"not an elf", junk, filepath.Join(dir, "o"), "parse"},
 		{"no output directory", good, filepath.Join(dir, "none", "o"), "write"},
 	} {
 		var w bytes.Buffer
-		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name == "no input" && !strings.Contains(err.Error(), "none")) {
+		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name != "span over the limit" && c.name != "not an elf" && !strings.Contains(err.Error(), "none")) {
 			t.Errorf("%s: err = %v, want it to start with %q", c.name, err, c.want)
+		}
+		if _, err := os.Stat(c.out); c.name == "span over the limit" && err == nil {
+			t.Errorf("%s: a refused size left an output file", c.name)
 		}
 	}
 	var w bytes.Buffer
@@ -105,12 +135,12 @@ func TestOnceRefusals(t *testing.T) {
 }
 
 func TestParseLines(t *testing.T) {
-	ok := "read 1000 3\nparse 2000 4\nflatten 3000 5\nwrite 4000 6\n"
+	ok := "read 1000 3\nparse 2000 4\nview 3000 5\nwrite 4000 6\n"
 	got, err := parseLines(ok)
 	if err != nil || got[1].d != 2*time.Microsecond || got[2].allocs != 5 || got[3].phase != "write" {
 		t.Errorf("got %+v, %v", got, err)
 	}
-	for _, bad := range []string{"read 1\n", "read x 3\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1 y\nparse 1 1\nflatten 1 1\nwrite 1 1\n", "read 1000 3\n", ""} {
+	for _, bad := range []string{"read 1\n", "read x 3\nparse 1 1\nview 1 1\nwrite 1 1\n", "read 1 y\nparse 1 1\nview 1 1\nwrite 1 1\n", "read 1000 3\n", ""} {
 		if _, err := parseLines(bad); err == nil {
 			t.Errorf("accepted %q", bad)
 		}
