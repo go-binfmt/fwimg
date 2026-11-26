@@ -134,4 +134,8 @@ go test -run '^$' -fuzz '^FuzzFlatten$' -fuzztime 60s .
 go run ./internal/bench -fwimg ./fwimg
 ```
 
+What comes next, lot by lot, is in [ROADMAP.md](ROADMAP.md); the format
+facts each differential test asserts, with the source line they were read
+from, are in [docs/spec-notes.md](docs/spec-notes.md).
+
 Licence: BSD-3-Clause.
