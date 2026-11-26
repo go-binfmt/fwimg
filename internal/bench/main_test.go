@@ -109,6 +109,16 @@ func TestRunWriteSmall(t *testing.T) {
 	if err := run([]string{"-write-small", filepath.Join(t.TempDir(), "no", "x")}, &w, mk); err == nil {
 		t.Error("an unwritable destination was accepted")
 	}
+	// mk above has two fixtures, and the second file does not exist.
+	if err := run([]string{"-write-small", dst, "-fixture", "1"}, &w, mk); err == nil {
+		t.Error("a fixture file that is not there was accepted")
+	}
+	if err := run([]string{"-write-small", dst, "-fixture", "5"}, &w, mk); err == nil || !strings.Contains(err.Error(), "-fixture 5") {
+		t.Errorf("an index past the fixtures: %v", err)
+	}
+	if err := run([]string{"-write-small", dst, "-fixture", "-1"}, &w, mk); err == nil {
+		t.Error("a negative index was accepted")
+	}
 	gone := func(dir string) ([]fixture, error) { return []fixture{{"fx", filepath.Join(dir, "gone")}}, nil }
 	if err := run([]string{"-write-small", dst}, &w, gone); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Errorf("a missing fixture: %v", err)
