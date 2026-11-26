@@ -109,6 +109,26 @@ func TestRunWriteSmall(t *testing.T) {
 	if err := run([]string{"-write-small", filepath.Join(t.TempDir(), "no", "x")}, &w, mk); err == nil {
 		t.Error("an unwritable destination was accepted")
 	}
+	// mk above has two fixtures, and the second file does not exist.
+	if err := run([]string{"-write-small", dst, "-fixture", "1"}, &w, mk); err == nil {
+		t.Error("a fixture file that is not there was accepted")
+	}
+	// The refusal is asserted as an error value: were the guard gone the
+	// index would panic, and a panic is recovered here into a failed assertion
+	// instead of killing the tests after it.
+	for _, idx := range []string{"2", "5", "-1"} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("-fixture %s panicked: %v", idx, r)
+				}
+			}()
+			err := run([]string{"-write-small", dst, "-fixture", idx}, &w, mk)
+			if err == nil || !strings.Contains(err.Error(), "-fixture "+idx+":") {
+				t.Errorf("-fixture %s: %v, want the refusal naming it", idx, err)
+			}
+		}()
+	}
 	gone := func(dir string) ([]fixture, error) { return []fixture{{"fx", filepath.Join(dir, "gone")}}, nil }
 	if err := run([]string{"-write-small", dst}, &w, gone); err == nil || !strings.Contains(err.Error(), "gone") {
 		t.Errorf("a missing fixture: %v", err)

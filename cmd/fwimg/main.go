@@ -484,7 +484,8 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.Section
 		if len(sel.Only) > 0 || len(sel.Remove) > 0 {
 			s.img, err = fwimg.ELFSections(data, sel, fo)
 		} else {
-			s.img, err = fwimg.ELFImage(data, fo)
+			// data is ours and is not written to again: no copy of the image.
+			s.img, err = fwimg.ELFImageView(data, fo)
 		}
 		if err != nil {
 			return nil, err

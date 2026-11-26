@@ -241,9 +241,47 @@ func TestELFSections(t *testing.T) {
 		if err == nil || got != nil || tc.is != nil && !errors.Is(err, tc.is) {
 			t.Errorf("%s: %v, %v", tc.name, got, err)
 		}
-		if tc.name == "not an ELF" && !strings.Contains(err.Error(), "parse ELF") {
+		if tc.name == "not an ELF" && err != nil && !strings.Contains(err.Error(), "parse ELF") {
 			t.Errorf("%s: %v", tc.name, err)
 		}
+	}
+}
+
+// ELFImageView shares the input's bytes where ELFImage and FlattenBytes copy
+// them, and Flatten hands its own read over (go-binfmt/fwimg#17).
+func TestELFImageViewAndCopies(t *testing.T) {
+	img := elfgen.Build(elf.EM_ARM, 0x1000, []elfgen.Seg{{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("ABCD")}})
+	view, err := ELFImageView(img, FlattenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp, err := ELFImage(img, FlattenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if &view.Segments[0].Data[0] != &img[0x200] {
+		t.Error("the view copied the segment")
+	}
+	if cap(view.Segments[0].Data) != 4 {
+		t.Errorf("a view's capacity is %d, so an append would write into the input", cap(view.Segments[0].Data))
+	}
+	if &cp.Segments[0].Data[0] == &img[0x200] {
+		t.Error("ELFImage shares the input's bytes")
+	}
+	out, _, err := FlattenBytes(img, FlattenOptions{})
+	if err != nil || string(out) != "ABCD" {
+		t.Fatalf("%q, %v", out, err)
+	}
+	out[0] = 'Z'
+	if img[0x200] != 'A' {
+		t.Error("FlattenBytes returned the caller's own bytes")
+	}
+	if _, _, err := FlattenBytes([]byte("nope"), FlattenOptions{}); err == nil {
+		t.Error("not an ELF accepted")
+	}
+	fl, _, err := Flatten(bytes.NewReader(img), int64(len(img)), FlattenOptions{})
+	if err != nil || string(fl) != "ABCD" {
+		t.Fatalf("%q, %v", fl, err)
 	}
 }
 
@@ -284,7 +322,7 @@ func TestELFImage(t *testing.T) {
 		if err == nil || got != nil || tc.is != nil && !errors.Is(err, tc.is) {
 			t.Errorf("%s: %v, %v", tc.name, got, err)
 		}
-		if tc.name == "not an ELF" && !strings.Contains(err.Error(), "parse ELF") {
+		if tc.name == "not an ELF" && err != nil && !strings.Contains(err.Error(), "parse ELF") {
 			t.Errorf("%s: %v", tc.name, err)
 		}
 	}

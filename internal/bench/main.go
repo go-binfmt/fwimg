@@ -96,6 +96,7 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 	hello := fs.String("hello", "", "empty Go program (internal/floor/hello), built like fwimg: with -cobra, adds the floor table")
 	cobra := fs.String("cobra", "", "cobra root that does nothing (internal/floor/cobraonly), built like fwimg")
 	small := fs.String("write-small", "", "write the 1 KiB fixture ELF to this path and stop")
+	index := fs.Int("fixture", 0, "with -write-small: which fixture to write (0 1 KiB, 1 4 MiB, 2 32 MiB)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -118,7 +119,10 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 	if *small != "" {
 		// Only the first (1 KiB) fixture, for the commands that need a real
 		// ELF with sections; objcopy refuses a bare set of program headers.
-		b, err := os.ReadFile(files[0].path)
+		if *index < 0 || *index >= len(files) {
+			return fmt.Errorf("-fixture %d: there are %d fixtures", *index, len(files))
+		}
+		b, err := os.ReadFile(files[*index].path)
 		if err != nil {
 			return err
 		}

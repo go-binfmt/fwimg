@@ -171,6 +171,21 @@ const (
 // ErrOverlap, ErrAddrOverflow); opts.Pad is not used here, and opts.MaxSize
 // bounds the span, as it does in Flat. The segments are copied out of data.
 func ELFImage(data []byte, opts FlattenOptions) (*Image, error) {
+	return elfImage(data, opts, false)
+}
+
+// ELFImageView is ELFImage without the copy: every Segment's Data is a slice
+// of data, so the Image costs no more than its headers. data must not change
+// while the Image is in use, and what is written to a Segment's Data is
+// written to data. The methods of Image never write to a Segment's Data, and
+// Flat of a one-segment Image returns it as it is. This is what a converter
+// that owns its input wants: `-O binary` of a 32 MiB ELF otherwise allocates
+// two more images (go-binfmt/fwimg#17).
+func ELFImageView(data []byte, opts FlattenOptions) (*Image, error) {
+	return elfImage(data, opts, true)
+}
+
+func elfImage(data []byte, opts FlattenOptions, view bool) (*Image, error) {
 	ef, err := elfpatch.Parse(data)
 	if errors.Is(err, elfpatch.ErrSegmentRange) {
 		return nil, fmt.Errorf("%w: %w", ErrRange, err)
@@ -210,7 +225,11 @@ func ELFImage(data []byte, opts FlattenOptions) (*Image, error) {
 			return nil, fmt.Errorf("%w: segment at 0x%x starts before 0x%x", ErrOverlap, addr(p), end)
 		}
 		end = addr(p) + p.Filesz
-		im.Segments[i] = Segment{Addr: addr(p), Data: slices.Clone(data[p.Off : p.Off+p.Filesz])}
+		seg := data[p.Off : p.Off+p.Filesz : p.Off+p.Filesz]
+		if !view {
+			seg = slices.Clone(seg)
+		}
+		im.Segments[i] = Segment{Addr: addr(p), Data: seg}
 	}
 	return im, nil
 }

@@ -80,9 +80,11 @@ func TestFlatten_NoLoadable(t *testing.T) {
 }
 
 func TestFlatten_BadELF(t *testing.T) {
-	if _, _, err := Flatten(bytes.NewReader([]byte("not elf")), 7, FlattenOptions{}); err == nil || !strings.Contains(err.Error(), "parse ELF") {
-		t.Fatalf("err = %v, want parse-ELF", err)
-	}
+	noPanic(t, "Flatten of a file that is not an ELF", func() {
+		if _, _, err := Flatten(bytes.NewReader([]byte("not elf")), 7, FlattenOptions{}); err == nil || !strings.Contains(err.Error(), "parse ELF") {
+			t.Errorf("err = %v, want parse-ELF", err)
+		}
+	})
 }
 
 type failAt struct {
@@ -113,9 +115,11 @@ func TestFlatten_RefusesInputOver2GiBBeforeReading(t *testing.T) {
 	if !errors.Is(err, ErrRange) || strings.Contains(err.Error(), "synthetic") {
 		t.Fatalf("err = %v, want ErrRange without a read", err)
 	}
-	if _, _, err := Flatten(bytes.NewReader(nil), -5, FlattenOptions{}); err == nil {
-		t.Fatal("negative size accepted")
-	}
+	noPanic(t, "Flatten of a negative size", func() {
+		if _, _, err := Flatten(bytes.NewReader(nil), -5, FlattenOptions{}); err == nil {
+			t.Error("negative size accepted")
+		}
+	})
 }
 
 func TestFlatten_ReadError(t *testing.T) {
