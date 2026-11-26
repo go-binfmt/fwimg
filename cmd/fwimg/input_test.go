@@ -235,6 +235,7 @@ func TestInputs_Refusals(t *testing.T) {
 		{"--base without -I binary, forced elf", []string{"-I", "elf", "--base", "0x10", "-o", o, elfPath}, "only for -I binary", 2},
 		{"bad --base", []string{"-I", "binary", "--base", "zz", "-o", o, raw}, "--base", 2},
 		{"unknown -I", []string{"-I", "coff", "-o", o, raw}, "unknown --input-target", 2},
+		{"-I elf on garbage names the file", []string{"-I", "elf", "-o", o, garbage}, garbage + ": ", 1},
 		{"-I elf on a hex file", []string{"-I", "elf", "-o", o, ihexFile(t, 0, "a")}, "ELF", 1},
 		{"-I ihex on an ELF", []string{"-I", "ihex", "-o", o, elfPath}, "ihex line 1", 1},
 		{"-I srec on a hex file", []string{"-I", "srec", "-o", o, ihexFile(t, 0, "a")}, "srec line 1", 1},
@@ -299,7 +300,7 @@ func TestInfo(t *testing.T) {
 		want string
 		code int
 	}{
-		"not a uimage":    {[]string{"info", put(t, "x", []byte("nope"))}, "uImage headers only", 1},
+		"not a uimage":    {[]string{"info", put(t, "x", []byte("nope"))}, "and this is not a format fwimg recognises", 1},
 		"an ihex file":    {[]string{"info", ihexFile(t, 0, "a")}, "a ihex file", 1},
 		"data CRC":        {[]string{"info", put(t, "bad", bad)}, "checksum", 1},
 		"bad multi table": {[]string{"info", truncMulti}, "size table", 1},

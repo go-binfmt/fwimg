@@ -23,6 +23,13 @@ func runCmd(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	cmd.SetOut(&o)
 	cmd.SetErr(&e)
 	cmd.SetArgs(args)
+	// A crash is reported as a failed assertion, so that a mutated guard fails
+	// a test on the refusal it owes instead of ending the test binary.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("%v: the command crashed instead of refusing: %v", args, r)
+		}
+	}()
 	err = cmd.Execute()
 	return o.String(), e.String(), err
 }
