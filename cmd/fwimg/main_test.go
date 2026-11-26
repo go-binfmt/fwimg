@@ -348,8 +348,8 @@ func TestWriteOutputReplacesExisting(t *testing.T) {
 
 func TestWriteOutputRefusals(t *testing.T) {
 	in := simple(t)
-	if _, _, err := runCmd(t, "-o", filepath.Join(t.TempDir(), "none", "k.img"), in); err == nil {
-		t.Error("an output in a directory that does not exist was accepted")
+	if _, _, err := runCmd(t, "-o", filepath.Join(t.TempDir(), "none", "k.img"), in); err == nil || !strings.Contains(err.Error(), "none") {
+		t.Errorf("an output in a directory that does not exist: %v", err)
 	}
 	// A refused size leaves no output file behind, nor touches an existing one.
 	out := filepath.Join(t.TempDir(), "k.img")

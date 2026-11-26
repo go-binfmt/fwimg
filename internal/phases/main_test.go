@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-binfmt/fwimg"
+	"github.com/go-binfmt/fwimg/internal/elfgen"
 )
 
 // The test binary stands in for the command: run starts os.Args[0] with -once,
@@ -100,13 +104,21 @@ func TestOnceRefusals(t *testing.T) {
 	if err := os.WriteFile(junk, []byte("not an elf"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	far := filepath.Join(dir, "far.elf")
+	if err := os.WriteFile(far, elfgen.Build(elf.EM_AARCH64, 0x80000, []elfgen.Seg{
+		{Paddr: 0x80000, Vaddr: 0x80000, Off: 0x400, Filesz: 1, Memsz: 1, Data: []byte{1}},
+		{Paddr: 0x80000 + 1<<30, Vaddr: 0x80000 + 1<<30, Off: 0x600, Filesz: 1, Memsz: 1, Data: []byte{2}},
+	}), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct{ name, in, out, want string }{
+		{"span over the limit", far, filepath.Join(dir, "o"), "write: " + fwimg.ErrTooLarge.Error()},
 		{"no input", filepath.Join(dir, "none"), filepath.Join(dir, "o"), "read"},
 		{"not an elf", junk, filepath.Join(dir, "o"), "parse"},
 		{"no output directory", good, filepath.Join(dir, "none", "o"), "write"},
 	} {
 		var w bytes.Buffer
-		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name == "no input" && !strings.Contains(err.Error(), "none")) {
+		if err := once1(&w, c.in, c.out); err == nil || !strings.HasPrefix(err.Error(), c.want) || (c.name != "span over the limit" && c.name != "not an elf" && !strings.Contains(err.Error(), "none")) {
 			t.Errorf("%s: err = %v, want it to start with %q", c.name, err, c.want)
 		}
 	}

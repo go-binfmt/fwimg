@@ -123,10 +123,8 @@ func (im *Image) WriteFlat(w io.Writer, pad byte, maxSize uint64) (uint64, error
 	if err != nil || len(im.Segments) == 0 {
 		return 0, err
 	}
-	if len(im.Segments) == 1 {
-		_, err := w.Write(im.Segments[0].Data)
-		return base, err
-	}
+	// A bufio.Writer keeps its first error and refuses everything after it, so
+	// the writes below are not checked one by one: Flush returns it.
 	bw := bufio.NewWriterSize(w, int(min(im.Span(), flatChunk)))
 	var fill []byte // the gap block, made when the first gap needs it
 	at := base
@@ -136,14 +134,10 @@ func (im *Image) WriteFlat(w io.Writer, pad byte, maxSize uint64) (uint64, error
 				fill = bytes.Repeat([]byte{pad}, int(min(im.Span(), flatChunk)))
 			}
 			n := int(min(gap, uint64(len(fill))))
-			if _, err := bw.Write(fill[:n]); err != nil {
-				return 0, err
-			}
+			bw.Write(fill[:n])
 			gap -= uint64(n)
 		}
-		if _, err := bw.Write(s.Data); err != nil {
-			return 0, err
-		}
+		bw.Write(s.Data)
 		at = s.End()
 	}
 	return base, bw.Flush()
