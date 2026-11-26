@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-binfmt/elfpatch"
 	"github.com/go-binfmt/fwimg/internal/elfgen"
 )
 
@@ -59,6 +60,18 @@ func TestSectionSelect(t *testing.T) {
 
 func mem(segs ...Segment) *Image { return &Image{Segments: segs} }
 
+// noPanic runs f and reports a panic as a failed assertion: a refusal that is
+// only held by a crash further down is not a test of the refusal.
+func noPanic(t *testing.T, what string, f func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s: panicked: %v", what, r)
+		}
+	}()
+	f()
+}
+
 func TestGapFillAndPadTo(t *testing.T) {
 	im := mem(Segment{0x10, []byte("ab")}, Segment{0x14, []byte("cd")}, Segment{0x16, []byte("ef")})
 	if err := im.GapFill(0xff, 0); err != nil {
@@ -82,8 +95,10 @@ func TestGapFillAndPadTo(t *testing.T) {
 		t.Errorf("PadTo below: %v", err)
 	}
 	empty := &Image{}
-	if err := empty.PadTo(100, 0, 0); err != nil || len(empty.Segments) != 0 {
-		t.Errorf("PadTo on an empty image: %v", err)
+	var perr error
+	noPanic(t, "PadTo on an empty image", func() { perr = empty.PadTo(100, 0, 0) })
+	if perr != nil || len(empty.Segments) != 0 {
+		t.Errorf("PadTo on an empty image: %v", perr)
 	}
 	if err := empty.GapFill(0, 0); err != nil {
 		t.Error(err)
@@ -214,15 +229,20 @@ func TestELFSections(t *testing.T) {
 	}{
 		{"both", sectioned(), SectionSelect{Only: []string{"a"}, Remove: []string{"b"}}, ErrFormat},
 		{"nothing kept", sectioned(), SectionSelect{Only: []string{"nomatch"}}, ErrNoSections},
-		{"no section table", elfgen.Build(elf.EM_ARM, 0, []elfgen.Seg{{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")}}), SectionSelect{Only: []string{".text"}}, nil},
+		{"no section table", elfgen.Build(elf.EM_ARM, 0, []elfgen.Seg{{Paddr: 0x1000, Off: 0x200, Filesz: 4, Memsz: 4, Data: []byte("AAAA")}}), SectionSelect{Only: []string{".text"}}, elfpatch.ErrUnsupported},
 		{"overlap", sectioned(elfgen.Sec{Name: ".dup", Type: 1, Flags: 2, Addr: 0x9002, Off: 0x202, N: 4}), SectionSelect{Remove: []string{"nothing"}}, ErrOverlap},
 		{"wraps", sectioned(elfgen.Sec{Name: ".top", Type: 1, Flags: 2, Addr: math.MaxUint64 - 1, Off: 0x300, N: 4}), SectionSelect{Only: []string{".top"}}, ErrAddrOverflow},
 		{"not an ELF", []byte("nope"), SectionSelect{Only: []string{"a"}}, nil},
 		{"segment outside", elfgen.Build(elf.EM_ARM, 0, []elfgen.Seg{{Paddr: 0x1000, Off: 0x200, Filesz: 0x10000, Memsz: 4, Data: []byte("A")}}), SectionSelect{Only: []string{"a"}}, ErrRange},
 	} {
-		got, err := ELFSections(tc.img, tc.sel, FlattenOptions{})
+		var got *Image
+		var err error
+		noPanic(t, tc.name, func() { got, err = ELFSections(tc.img, tc.sel, FlattenOptions{}) })
 		if err == nil || got != nil || tc.is != nil && !errors.Is(err, tc.is) {
 			t.Errorf("%s: %v, %v", tc.name, got, err)
+		}
+		if tc.name == "not an ELF" && !strings.Contains(err.Error(), "parse ELF") {
+			t.Errorf("%s: %v", tc.name, err)
 		}
 	}
 }
@@ -258,9 +278,14 @@ func TestELFImage(t *testing.T) {
 		{"outside", elfgen.Build(elf.EM_ARM, 0, []elfgen.Seg{{Paddr: 0x1000, Off: 0x200, Filesz: 0x10000, Memsz: 4, Data: []byte("A")}}), ErrRange},
 		{"not an ELF", []byte("nope"), nil},
 	} {
-		got, err := ELFImage(tc.img, FlattenOptions{})
+		var got *Image
+		var err error
+		noPanic(t, tc.name, func() { got, err = ELFImage(tc.img, FlattenOptions{}) })
 		if err == nil || got != nil || tc.is != nil && !errors.Is(err, tc.is) {
 			t.Errorf("%s: %v, %v", tc.name, got, err)
+		}
+		if tc.name == "not an ELF" && !strings.Contains(err.Error(), "parse ELF") {
+			t.Errorf("%s: %v", tc.name, err)
 		}
 	}
 }

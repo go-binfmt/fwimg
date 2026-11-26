@@ -62,8 +62,8 @@ func (im *Image) GapFill(pad byte, maxSize uint64) error {
 }
 
 // PadTo appends a segment of pad bytes after the last one, up to addr, as
-// `objcopy --pad-to` does (a section of its own, so records are not merged). An image that already ends at or past addr, or an empty one, is left
-// as it is. The bytes added may not pass maxSize (zero means DefaultMaxSize):
+// `objcopy --pad-to` does (a section of its own, so records are not merged). An image that already
+// ends at or past addr, or an empty one, is left as it is. The bytes added may not pass maxSize (zero means DefaultMaxSize):
 // ErrTooLarge.
 func (im *Image) PadTo(addr uint64, pad byte, maxSize uint64) error {
 	if len(im.Segments) == 0 {

@@ -134,7 +134,7 @@ func TestL2_Sections(t *testing.T) {
 		{"both", []string{"-j", "a", "-R", "b"}, in, "undefined"},
 		{"not an ELF", []string{"-j", "a", "-I", "binary", "--base", "0"}, o, "sections of an ELF"},
 		{"nothing", []string{"-j", "nomatch"}, in, "no loadable section"},
-		{"no table", []string{"-j", ".text"}, simple(t), "section"},
+		{"no table", []string{"-j", ".text"}, simple(t), "sections:"},
 	} {
 		_, _, err := runCmd(t, append(append(tc.args, "-O", "srec", "-o", o), tc.in)...)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
