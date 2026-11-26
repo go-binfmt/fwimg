@@ -46,7 +46,7 @@ func TestRunInput(t *testing.T) {
 	if err := run([]string{"-rounds", "1", "-input", in}, &w, os.Args[0]); err != nil || !strings.Contains(w.String(), "big.elf") {
 		t.Errorf("-input: %v\n%s", err, w.String())
 	}
-	if err := run([]string{"-rounds", "1", "-input", in + ".none"}, &w, "x"); err == nil {
+	if err := run([]string{"-rounds", "1", "-input", in + ".none"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "big.elf.none") {
 		t.Error("a missing -input was accepted")
 	}
 }
