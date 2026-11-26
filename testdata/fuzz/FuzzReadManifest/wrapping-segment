@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"schema_version\":1,\"format\":\"binary\",\"base\":\"0xfffffffffffffffc\",\"entry\":null,\"pad\":0,\"size\":18446744073709551615,\"data_size\":8,\"crc32\":\"00000000\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"segments\":[{\"address\":\"0xfffffffffffffffc\",\"size\":8,\"source\":\"\",\"crc32\":\"00000000\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}]}")

@@ -88,14 +88,21 @@ byte-equal oracles.
 **Change from the brief:** SOURCE_DATE_EPOCH is reclassified from "the
 reference does not do it" to parity (claim f is false).
 
-## L4 — manifest and `fwimg info` (v0.6.0)
+## L4 — manifest, `fwimg info`, `fwimg verify` (v0.6.0)
+
+Done. No manifest or SBOM schema exists in the fleet to reuse (searched
+2026-11-26), so `schema/manifest-1.schema.json` (JSON Schema 2020-12) is new.
 
 - `--manifest FILE`: JSON with CRC-32 (IEEE) and SHA-256 of the whole image
-  and of each segment, plus addresses, sizes and the source ELF's sections.
-  No reference emits one (§10 d); oracles are `sha256sum` and Go's
-  `hash/crc32` on the extracted bytes.
-- `fwimg info FILE` for every format L1 reads: address ranges, entry,
+  and of each segment and region, plus addresses, sizes and the source ELF's
+  sections. No reference emits one (§10 d); oracles are `sha256sum` and Go's
+  `hash/crc32` on the extracted bytes. Deterministic: fixed key order, no
+  timestamp unless `SOURCE_DATE_EPOCH`.
+- `fwimg info FILE [--json]` for every format L1 reads: address ranges, entry,
   uImage fields. Field values against `mkimage -l` and `srec_info`.
+- `fwimg verify --manifest FILE IMAGE` re-reads an image in any format and
+  checks every hash; `data_size` is informational (a flat binary counts its
+  padding).
 
 ## L5 — uImage compression, UF2, Verilog (v0.7.0)
 

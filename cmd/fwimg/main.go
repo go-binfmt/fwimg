@@ -115,6 +115,9 @@ type options struct {
 	noVerify bool
 	timeFlag string
 	stamp    uint32
+
+	// L4: the manifest file.
+	manifest string
 	errw     io.Writer // warnings
 }
 
@@ -149,7 +152,10 @@ range that wraps, a record with a bad checksum, an image above --max-size or a
 value that does not fit the format is refused, with exit status 1 and nothing
 written.
 
-fwimg info FILE lists the header of a uImage the way mkimage -l does.`,
+--manifest FILE also writes a JSON manifest of the image: format, base, entry,
+sizes, CRC-32 and SHA-256 of the whole image and of each segment. fwimg info
+FILE describes any input (a uImage the way mkimage -l does, --json as a
+manifest) and fwimg verify --manifest FILE IMAGE checks an image against one.`,
 		Example: `  fwimg -O binary -o kernel.img kernel.elf
   fwimg -O ihex -o fw.hex fw.elf
   fwimg -I ihex -O binary -o fw.bin fw.hex
@@ -208,50 +214,9 @@ fwimg info FILE lists the header of a uImage the way mkimage -l does.`,
 	fl.Uint64Var(&o.gapWarn, "gap-warn", 8, "warn on stderr when a flat output (binary, uimage) holds more than this many times its data as filler, from 64 KiB of it; 0 turns the warning off")
 	fl.BoolVar(&o.noVerify, "no-verify", false, "do not read the output back and compare it with the image (the check is on by default)")
 	fl.StringVar(&o.timeFlag, "time", "", "uimage creation time in seconds, decimal or 0x-hex (default: SOURCE_DATE_EPOCH when set, else 0)")
-	cmd.AddCommand(&cobra.Command{
-		Use:   "info FILE",
-		Short: "List a uImage header the way mkimage -l does",
-		Long: `info reads a legacy U-Boot uImage, verifies the magic and both CRCs, and prints
-its header like mkimage -l: name, creation time (UTC), type, data size, load
-address, entry point, and for a multi-file image the size of each file. A file
-that is not a uImage is refused; later releases list the other formats.`,
-		Args: func(c *cobra.Command, a []string) error {
-			if err := cobra.ExactArgs(1)(c, a); err != nil {
-				return usageErr{err.Error()}
-			}
-			return nil
-		},
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := readInput(args[0])
-			if err != nil {
-				return err
-			}
-			if f := fwimg.Detect(data); f != fwimg.FormatUImage {
-				return fmt.Errorf("%s: info lists uImage headers only, and this is %s", args[0], describe(f))
-			}
-			h, payload, err := fwimg.ParseUImage(data)
-			if err != nil {
-				return fmt.Errorf("%s: %w", args[0], err)
-			}
-			comps, err := h.Components(payload)
-			if err != nil {
-				return fmt.Errorf("%s: %w", args[0], err)
-			}
-			_, err = io.WriteString(cmd.OutOrStdout(), h.Listing(comps))
-			return err
-		},
-	})
+	fl.StringVar(&o.manifest, "manifest", "", "write a JSON manifest of the image (schema manifest-1) to this file, after the output is written and checked")
+	cmd.AddCommand(infoCmd(), verifyCmd())
 	return cmd
-}
-
-// describe names a detected format for an error message.
-func describe(f string) string {
-	if f == "" {
-		return "not a format fwimg recognises"
-	}
-	return "a " + f + " file"
 }
 
 // readInput reads a whole input file, bounded by maxInput.
@@ -343,23 +308,12 @@ func run(o *options, input string) (err error) {
 	default:
 		return usageErr{fmt.Sprintf("unknown --output-target %q (want binary, srec, ihex, uimage)", o.format)}
 	}
-	switch o.input {
-	case "", fwimg.FormatELF, fwimg.FormatIHEX, fwimg.FormatSREC, fwimg.FormatUImage, fwimg.FormatBinary:
-	default:
-		return usageErr{fmt.Sprintf("unknown --input-target %q (want elf, ihex, srec, uimage, binary)", o.input)}
+	rawBase, err := checkInput(o.input, o.base)
+	if err != nil {
+		return err
 	}
-	var rawBase uint64
-	switch {
-	case o.input == fwimg.FormatBinary && o.base == "":
-		return usageErr{"-I binary needs --base ADDR: a raw file has no address, and none is guessed"}
-	case o.input != fwimg.FormatBinary && o.base != "":
-		return usageErr{"--base is only for -I binary"}
-	case o.base != "":
-		v, err := parseUint("base", o.base, 64)
-		if err != nil {
-			return err
-		}
-		rawBase = v
+	if o.manifest != "" && o.manifest == o.output {
+		return usageErr{"--manifest and -o name the same file"}
 	}
 	arch, err := fwimg.ArchFromName(o.arch)
 	if err != nil {
@@ -574,17 +528,45 @@ func run(o *options, input string) (err error) {
 	if err := writeOutput(o.output, emit); err != nil {
 		return err
 	}
-	if o.noVerify {
+	if !o.noVerify {
+		afterWrite(o.output)
+		if err := verifyOutput(o, im, fo.Pad, uopts); err != nil {
+			if rerr := removeFile(o.output); rerr != nil {
+				err = errors.Join(err, rerr)
+			}
+			return fmt.Errorf("%s: %w (the file was removed)", o.output, err)
+		}
+	}
+	if o.manifest == "" {
 		return nil
 	}
-	afterWrite(o.output)
-	if err := verifyOutput(o, im, fo.Pad, uopts); err != nil {
-		if rerr := removeFile(o.output); rerr != nil {
-			err = errors.Join(err, rerr)
-		}
-		return fmt.Errorf("%s: %w (the file was removed)", o.output, err)
+	return writeManifest(o, im, src, in, data, input, fo, uopts)
+}
+
+// writeManifest describes the image just written, and the input it came from.
+func writeManifest(o *options, im *fwimg.Image, src *source, in string, data []byte, input string, fo fwimg.FlattenOptions, uopts fwimg.UImageOptions) error {
+	regions, _ := fwimg.ParseRegions(o.region) // parsed before, in run
+	epoch, err := manifestEpoch()
+	if err != nil {
+		return err
 	}
-	return nil
+	mo := fwimg.ManifestOptions{
+		Version: version(), Format: o.format, Source: sourceOf(input, in, data),
+		Regions: regions, Pad: fo.Pad, MaxSize: fo.MaxSize, Epoch: epoch,
+	}
+	if src.elf {
+		if mo.Sections, err = fwimg.ELFManifestSections(data); err != nil {
+			return fmt.Errorf("%s: %w", input, err)
+		}
+	}
+	if o.format == "uimage" {
+		mo.UImage = uimageHeader(uopts)
+	}
+	m, err := fwimg.NewManifest(im, mo)
+	if err != nil {
+		return err
+	}
+	return writeOutput(o.manifest, func(w io.Writer) error { _, err := w.Write(m.JSON()); return err })
 }
 
 // afterWrite is replaceable in tests: it runs once the output is written and
