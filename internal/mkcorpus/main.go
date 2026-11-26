@@ -16,10 +16,18 @@ import (
 type seg = elfgen.Seg
 
 func main() {
-	if err := run("testdata/fuzz/FuzzFlatten"); err != nil {
+	if err := all("testdata/fuzz"); err != nil {
 		fmt.Fprintln(os.Stderr, "mkcorpus:", err)
 		os.Exit(1)
 	}
+}
+
+// all writes every corpus under root (testdata/fuzz).
+func all(root string) error {
+	if err := run(filepath.Join(root, "FuzzFlatten")); err != nil {
+		return err
+	}
+	return runText(root)
 }
 
 func run(dir string) error {

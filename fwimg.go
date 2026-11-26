@@ -178,8 +178,8 @@ func FlattenBytes(data []byte, opts FlattenOptions) ([]byte, uint64, error) {
 
 // checkSpan refuses a range of n bytes starting at the 32-bit address addr
 // that would run past the end of the 32-bit address space.
-func checkSpan(addr uint32, n int) error {
-	if uint64(addr)+uint64(n) > 1<<32 {
+func checkSpan(addr uint64, n int) error {
+	if addr > 1<<32 || addr+uint64(n) > 1<<32 {
 		return fmt.Errorf("%w: %d bytes at 0x%08x run past 4 GiB", ErrAddrOverflow, n, addr)
 	}
 	return nil
@@ -196,6 +196,19 @@ func checkSpan(addr uint32, n int) error {
 // (ErrFormat) a name longer than 252 bytes or dataPerLine above 250: the
 // record's one-byte count could not hold them.
 func SREC(addr uint32, data []byte, name string, entry uint32, dataPerLine int) ([]byte, error) {
+	im := &Image{Entry: uint64(entry), HasEntry: true}
+	if len(data) > 0 {
+		im.Segments = []Segment{{Addr: uint64(addr), Data: data}}
+	}
+	return EncodeSREC(im, name, dataPerLine)
+}
+
+// EncodeSREC is SREC for an Image: the segments are written in order, each as
+// S3 records, and a gap between two is left out of the file (objcopy does the
+// same). The S7 record carries the image's entry, 0 when it has none. The
+// same refusals as SREC apply, and an entry above 32 bits is refused
+// (ErrAddrOverflow).
+func EncodeSREC(im *Image, name string, dataPerLine int) ([]byte, error) {
 	if dataPerLine <= 0 {
 		dataPerLine = 16
 	}
@@ -205,10 +218,19 @@ func SREC(addr uint32, data []byte, name string, entry uint32, dataPerLine int) 
 	if len(name) > 252 {
 		return nil, fmt.Errorf("%w: S0 name of %d bytes, at most 252", ErrFormat, len(name))
 	}
-	if err := checkSpan(addr, len(data)); err != nil {
-		return nil, err
+	for _, s := range im.Segments {
+		if err := checkSpan(s.Addr, len(s.Data)); err != nil {
+			return nil, err
+		}
 	}
-	size, err := textSize(len(data)+len(name), dataPerLine)
+	var entry uint64
+	if im.HasEntry {
+		entry = im.Entry
+	}
+	if entry > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: start address 0x%x does not fit 32 bits", ErrAddrOverflow, entry)
+	}
+	size, err := textSize(im.Len()+uint64(len(name)), dataPerLine)
 	if err != nil {
 		return nil, err
 	}
@@ -216,12 +238,14 @@ func SREC(addr uint32, data []byte, name string, entry uint32, dataPerLine int) 
 	// S0 header: address 0x0000, data = name bytes.
 	out = srecLine(out, '0', 0, []byte(name))
 	// S3 data records.
-	for off := 0; off < len(data); off += dataPerLine {
-		end := min(off+dataPerLine, len(data))
-		out = srecLine(out, '3', addr+uint32(off), data[off:end])
+	for _, s := range im.Segments {
+		for off := 0; off < len(s.Data); off += dataPerLine {
+			end := min(off+dataPerLine, len(s.Data))
+			out = srecLine(out, '3', uint32(s.Addr)+uint32(off), s.Data[off:end])
+		}
 	}
 	// S7 termination with the entry address, no data.
-	out = srecLine(out, '7', entry, nil)
+	out = srecLine(out, '7', uint32(entry), nil)
 	return out, nil
 }
 
@@ -261,16 +285,34 @@ func srecLine(out []byte, typ byte, addr uint32, data []byte) []byte {
 // It refuses (ErrAddrOverflow) data that would run past 4 GiB and
 // (ErrFormat) dataPerLine above 255.
 func IHEX(addr uint32, data []byte, dataPerLine int) ([]byte, error) {
+	im := &Image{}
+	if len(data) > 0 {
+		im.Segments = []Segment{{Addr: uint64(addr), Data: data}}
+	}
+	return EncodeIHEX(im, dataPerLine)
+}
+
+// EncodeIHEX is IHEX for an Image: every segment is written in order, with a
+// type-04 record whenever the upper 16 bits change, and a gap between
+// segments is left out of the file. A non-zero start address is written as a
+// type-05 record before the EOF (objcopy does not write one for 0), and one
+// above 32 bits is refused (ErrAddrOverflow). The same refusals as IHEX apply.
+func EncodeIHEX(im *Image, dataPerLine int) ([]byte, error) {
 	if dataPerLine <= 0 {
 		dataPerLine = 16
 	}
 	if dataPerLine > 255 {
 		return nil, fmt.Errorf("%w: %d data bytes per record, at most 255", ErrFormat, dataPerLine)
 	}
-	if err := checkSpan(addr, len(data)); err != nil {
-		return nil, err
+	for _, s := range im.Segments {
+		if err := checkSpan(s.Addr, len(s.Data)); err != nil {
+			return nil, err
+		}
 	}
-	size, err := textSize(len(data), dataPerLine)
+	if im.HasEntry && im.Entry > math.MaxUint32 {
+		return nil, fmt.Errorf("%w: start address 0x%x does not fit 32 bits", ErrAddrOverflow, im.Entry)
+	}
+	size, err := textSize(im.Len(), dataPerLine)
 	if err != nil {
 		return nil, err
 	}
@@ -278,20 +320,28 @@ func IHEX(addr uint32, data []byte, dataPerLine int) ([]byte, error) {
 	// The segment base starts at 0, which is what a reader assumes before
 	// any type-04 record: no record is needed until the upper half differs.
 	var upper uint32
-	for off := 0; off < len(data); {
-		cur := addr + uint32(off)
-		hi := cur >> 16
-		// A record never crosses a 64 KiB boundary: its 16-bit address
-		// would wrap inside the segment.
-		n := min(dataPerLine, len(data)-off, int(0x10000-(cur&0xffff)))
-		if hi != upper {
-			upper = hi
-			var ext [2]byte
-			binary.BigEndian.PutUint16(ext[:], uint16(hi))
-			out = ihexRecord(out, 0, 0x04, ext[:])
+	for _, s := range im.Segments {
+		addr, data := uint32(s.Addr), s.Data
+		for off := 0; off < len(data); {
+			cur := addr + uint32(off)
+			hi := cur >> 16
+			// A record never crosses a 64 KiB boundary: its 16-bit address
+			// would wrap inside the segment.
+			n := min(dataPerLine, len(data)-off, int(0x10000-(cur&0xffff)))
+			if hi != upper {
+				upper = hi
+				var ext [2]byte
+				binary.BigEndian.PutUint16(ext[:], uint16(hi))
+				out = ihexRecord(out, 0, 0x04, ext[:])
+			}
+			out = ihexRecord(out, uint16(cur), 0x00, data[off:off+n])
+			off += n
 		}
-		out = ihexRecord(out, uint16(cur), 0x00, data[off:off+n])
-		off += n
+	}
+	if im.HasEntry && im.Entry != 0 {
+		var e [4]byte
+		binary.BigEndian.PutUint32(e[:], uint32(im.Entry))
+		out = ihexRecord(out, 0, 0x05, e[:])
 	}
 	return ihexRecord(out, 0, 0x01, nil), nil // EOF
 }
@@ -461,8 +511,8 @@ var maxText uint64 = math.MaxInt
 // encoders allocate once. An output that cannot be indexed by an int on this
 // platform is refused (ErrTooLarge): on 32 bits the doubled size of a large
 // input wraps negative.
-func textSize(n, per int) (int, error) {
-	est := 2*uint64(n) + (uint64(n/per)+3)*16
+func textSize(n uint64, per int) (int, error) {
+	est := 2*n + (n/uint64(per)+3)*16
 	if est > maxText {
 		return 0, fmt.Errorf("%w: %d data bytes encode to about %d bytes of text", ErrTooLarge, n, est)
 	}

@@ -22,8 +22,21 @@ fwimg -O srec   --name fw -o fw.srec fw.elf
 fwimg -O uimage --load 0x80000 --entry 0x80000 --name linux -o uImage kernel.elf
 ```
 
+The input can be any of those too, so any format converts to any other. The
+format is recognised by its magic or syntax (ELF, Intel HEX, S-record, uImage)
+and `-I` forces it; a raw file is never guessed and needs `-I binary --base`:
+
+```
+fwimg -I ihex -O binary -o fw.bin fw.hex
+fwimg -I srec -O ihex -o fw.hex fw.srec
+fwimg -I binary --base 0x8000000 -O srec -o fw.srec fw.bin
+fwimg -O binary -o kernel.bin uImage                     # the payload of a uImage
+fwimg info uImage                                        # the header, as mkimage -l prints it
+```
+
 The library is `github.com/go-binfmt/fwimg`: `Flatten`, `SREC`, `IHEX`,
-`UImage`, plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
+`UImage`, the readers `DecodeIHEX`, `DecodeSREC`, `ParseUImage`, `RawImage`
+and `Detect` (an `Image` of sparse segments), plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
 
 ```go
 flat, base, err := fwimg.Flatten(f, size, fwimg.FlattenOptions{Pad: 0xff})
@@ -50,14 +63,18 @@ a sentinel (`errors.Is`) and with nothing allocated for it:
 | `UImage` payload of 4 GiB or more (the header field would be truncated) | `ErrFormat` |
 | an S-record name or line length the one-byte count cannot hold, an Intel HEX line above 255 bytes | `ErrFormat` |
 | a default `--load` / `--entry` taken from a 64-bit ELF that does not fit 32 bits | refused by the CLI: give the flag |
+| an Intel HEX or S-record file with a bad checksum, no end record, records after it, overlapping records or data past 4 GiB | `ErrChecksum`, `ErrSyntax`, `ErrOverlap`, `ErrAddrOverflow`, with the line number |
+| text with records scattered far apart (each piece costs the decoder) | `ErrTooLarge`: data bytes plus 16 bytes per separate piece count against `DecodeOptions.MaxSize` |
+| a uImage with a bad header or data CRC, an `ih_size` past the file, or a multi-file table that does not end inside the payload | `ErrFormat` / `ErrRange` |
 
 Every one of these has a test that asserts the refusal; the memory bomb runs under
 a memory limit and asserts that nothing is allocated. Sizes are `int` on 32-bit
 platforms, so CI runs the whole suite as `GOARCH=386` (native) and `s390x` (big
 endian, under qemu). `FuzzFlatten` feeds arbitrary bytes to the parser and checks
-that whatever is accepted survives the SREC and IHEX encoders byte for byte; the
-corpus is committed under `testdata/fuzz/FuzzFlatten`, replayed on every run, and
-fuzzed 60 s in CI. `govulncheck` runs on every push and daily.
+that whatever is accepted survives the SREC and IHEX encoders byte for byte;
+`FuzzIHEX`, `FuzzSREC` and `FuzzUImage` do the same for the readers (an accepted
+file encodes and decodes to the same image). The corpora are committed under
+`testdata/fuzz`, replayed on every run, and fuzzed 60 s each in CI. `govulncheck` runs on every push and daily.
 
 Two fixes beyond the refusals, both found while porting:
 
@@ -80,7 +97,13 @@ converts it with GNU objcopy and U-Boot's mkimage, and compares:
 * `uimage` for kernel, standalone and firmware types: byte for byte, header CRC
   and data CRC included.
 
-CI installs `gcc binutils u-boot-tools` and sets `FWIMG_REQUIRE_DIFF`, so a missing
+The input side (`differential_input_test.go`) reads what objcopy and srec_cat
+write (`-O ihex`, `-O srec`, `--srec-forceS3`, `--srec-len`, raw files placed with
+`--change-addresses` / `-offset`), reads back to the same bytes objcopy reads from
+our files, and compares `Listing` with `mkimage -l` for six header shapes and a
+multi-file image; `dumpimage` extracts our payload.
+
+CI installs `gcc binutils srecord u-boot-tools` and sets `FWIMG_REQUIRE_DIFF`, so a missing
 tool is a failure and not a skip; elsewhere the lane skips with the reason stated.
 Nothing binary is committed.
 

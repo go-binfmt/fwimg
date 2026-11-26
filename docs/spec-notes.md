@@ -377,6 +377,35 @@ copy pinned by commit and tests it against that file.
 
 ---
 
+## 9a. L1 decoders: decisions where the references differ or say nothing
+
+Each line is a choice made in `decode.go`, `uimage.go` or the CLI, with the
+test that holds it. The decoders read into a sparse `Image` (sorted, disjoint,
+non-adjacent segments) under one budget: data bytes plus 16 bytes per
+non-contiguous piece, so a file of many one-byte records far apart is refused
+before the work is done (`ErrTooLarge`, `DecodeOptions.MaxSize`).
+
+| Case | Decision | Why |
+|---|---|---|
+| Overlapping records | refused, `ErrOverlap` | objcopy and srec_cat let the later record win silently; a firmware image with two values for one address is a defect to report |
+| No Intel HEX EOF (type 01) / no S7–S9 | refused, `ErrSyntax` | a truncated file looks exactly like this |
+| Records after the EOF / terminator | refused | ignoring them loses data without a word |
+| Checksum wrong | refused, `ErrChecksum`, with the line number | both formats define it ([intel5], [srec5]) |
+| Data that passes 4 GiB | refused, `ErrAddrOverflow` | objcopy wraps; the encoders already refuse to |
+| Intel HEX type 03 start | decoded as CS*16+IP | the segment-mode meaning in [intel5]; type 05 is the linear EIP |
+| S5/S6 count | checked against the S1–S3 records read | the format defines it as that count |
+| `-I binary` | needs `--base`, never guessed | objcopy needs `-I binary` too (§10 e) |
+| uImage `Created` | printed in UTC | `mkimage -l` uses local time; the differential test sets `TZ=UTC` |
+| uImage script | its payload is the one-file table mkimage wraps it in (size, 0, file) | `mkimage -l` lists it under `Contents:` like a multi-file image (differential test) |
+| uImage multi-file table | bounded by `ih_size` | U-Boot's own loop is not (§5.3) |
+
+Names printed by `Listing` were first written from `boot/image.c` and then
+corrected against `mkimage -l` from u-boot-tools in the differential lane:
+a compressed payload prints `(gzip compressed)`, an uncompressed one
+`(uncompressed)`, and type 7 is `Filesystem Image`.
+
+---
+
 ## 10. "The reference does not do X" — verdicts
 
 | Claim | Verdict | Evidence |
