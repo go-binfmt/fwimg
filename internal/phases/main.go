@@ -57,6 +57,7 @@ func run(args []string, w io.Writer, self string) error {
 	once := fs.Bool("once", false, "internal: run the phases once and print one line each")
 	in := fs.String("in", "", "internal: input ELF for -once")
 	out := fs.String("out", "", "internal: output file for -once")
+	src := fs.String("input", "", "time this ELF instead of the 1 KiB fixture (go-binfmt/fwimg#17: 4 and 32 MiB)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -75,8 +76,16 @@ func run(args []string, w io.Writer, self string) error {
 	}
 	defer os.RemoveAll(dir)
 	input := filepath.Join(dir, "in.elf")
+	body, title := fixture(), "1 KiB ELF"
+	if *src != "" {
+		b, err := os.ReadFile(*src)
+		if err != nil {
+			return err
+		}
+		body, title = b, fmt.Sprintf("%d-byte ELF %s", len(b), filepath.Base(*src))
+	}
 	// A failed write shows as the child's "read" error below.
-	_ = os.WriteFile(input, fixture(), 0o644)
+	_ = os.WriteFile(input, body, 0o644)
 	output := filepath.Join(dir, "out.bin")
 
 	type key struct {
@@ -106,7 +115,7 @@ func run(args []string, w io.Writer, self string) error {
 			allocs[k] = l.allocs
 		}
 	}
-	fmt.Fprintf(w, "Phases of one cold fwimg process, 1 KiB ELF, `-O binary`; %d fresh processes per kind of write\n\n", *rounds)
+	fmt.Fprintf(w, "Phases of one cold fwimg process, %s, `-O binary`; %d fresh processes per kind of write\n\n", title, *rounds)
 	fmt.Fprintln(w, "| phase | new output file | existing output file | allocations |")
 	fmt.Fprintln(w, "|---|---:|---:|---:|")
 	for _, p := range phaseNames {
@@ -185,13 +194,10 @@ func once1(w io.Writer, in, out string) error {
 		f    func() error
 	}{
 		{"read", func() error {
-			f, err := os.Open(in)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			_, _ = f.Stat() // fwimg stats the input before it reads
-			data, err = io.ReadAll(io.LimitReader(f, 1<<31))
+			// os.ReadFile stats the input and reads into a buffer of that
+			// size, as the command does (io.ReadAll would grow from 512 B).
+			var err error
+			data, err = os.ReadFile(in)
 			return err
 		}},
 		{"parse", func() error { _, err := elfpatch.Parse(data); return err }},

@@ -36,6 +36,21 @@ func TestRunTable(t *testing.T) {
 	}
 }
 
+func TestRunInput(t *testing.T) {
+	t.Setenv("PHASES_AS_COMMAND", "1")
+	in := filepath.Join(t.TempDir(), "big.elf")
+	if err := os.WriteFile(in, fixture(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var w bytes.Buffer
+	if err := run([]string{"-rounds", "1", "-input", in}, &w, os.Args[0]); err != nil || !strings.Contains(w.String(), "big.elf") {
+		t.Errorf("-input: %v\n%s", err, w.String())
+	}
+	if err := run([]string{"-rounds", "1", "-input", in + ".none"}, &w, "x"); err == nil {
+		t.Error("a missing -input was accepted")
+	}
+}
+
 func TestRunRefusals(t *testing.T) {
 	var w bytes.Buffer
 	if err := run([]string{"-rounds", "0"}, &w, "x"); err == nil || !strings.Contains(err.Error(), "-rounds") {
