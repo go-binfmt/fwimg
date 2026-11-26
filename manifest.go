@@ -173,11 +173,7 @@ func SumBytes(b []byte) (crc, sha string) {
 // writeSpan writes the bytes of the image from lo to hi: segments where they
 // are, pad elsewhere. It allocates one block of pad, at most flatChunk.
 func (im *Image) writeSpan(w io.Writer, pad byte, lo, hi uint64) {
-	// lo == hi writes nothing either way; only lo > hi needs the guard, as
-	// hi-lo below would wrap. (`lo > hi` is therefore an equivalent mutant.)
-	if lo >= hi {
-		return
-	}
+	hi = max(hi, lo) // an inverted span is an empty one; hi-lo must not wrap
 	var fill []byte
 	gap := func(n uint64) {
 		if fill == nil {
@@ -283,10 +279,11 @@ func (m *Manifest) JSON() []byte {
 
 // addr parses a manifest address.
 func addr(field, s string) (uint64, error) {
-	if len(s) < 3 || s[:2] != "0x" || s != strings.ToLower(s) || (len(s) > 3 && s[2] == '0') {
+	h, ok := strings.CutPrefix(s, "0x")
+	if !ok || h == "" || s != strings.ToLower(s) || (len(h) > 1 && h[0] == '0') {
 		return 0, fmt.Errorf("%w: %s %q is not 0x and lowercase hex", ErrManifest, field, s)
 	}
-	v, err := strconv.ParseUint(s[2:], 16, 64)
+	v, err := strconv.ParseUint(h, 16, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%w: %s %q does not fit 64 bits", ErrManifest, field, s)
 	}
