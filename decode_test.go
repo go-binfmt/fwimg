@@ -89,6 +89,30 @@ func TestDecodeIHEX_Records(t *testing.T) {
 	}
 }
 
+// A decoder that is handed hostile text must refuse, not crash. When a guard
+// is removed the code after it crashes; reporting that as a failed assertion
+// (not a dead test binary) is what lets a mutation of the guard be told from
+// luck: the test names the case that the guard exists for.
+func guarded(t *testing.T, decode func() (*Image, error)) (im *Image, err error) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("the decoder crashed instead of refusing: %v", r)
+		}
+	}()
+	return decode()
+}
+
+func guardedIHEX(t *testing.T, text string) (*Image, error) {
+	t.Helper()
+	return guarded(t, func() (*Image, error) { return DecodeIHEX([]byte(text), DecodeOptions{}) })
+}
+
+func guardedSREC(t *testing.T, text string) (*Image, error) {
+	t.Helper()
+	return guarded(t, func() (*Image, error) { return DecodeSREC([]byte(text), DecodeOptions{}) })
+}
+
 func TestDecodeIHEX_Refusals(t *testing.T) {
 	good := ih(0, 0, 1)
 	bad := func(s string, i int) string { // flip one hex digit of a line
@@ -108,12 +132,14 @@ func TestDecodeIHEX_Refusals(t *testing.T) {
 		{"no EOF record", good, ErrSyntax},
 		{"empty input", "", ErrSyntax},
 		{"data after EOF", ihEOF + good, ErrSyntax},
-		{"EOF with data", ih(1, 0, 1) + ihEOF, ErrSyntax},
+		{"EOF with data, last", ih(1, 0, 1), ErrSyntax},
+		{"EOF with data, then another EOF", ih(1, 0, 1) + ihEOF, ErrSyntax},
 		{"no colon", "0" + good[1:] + ihEOF, ErrSyntax},
 		{"odd length", good[:len(good)-2] + "\n" + ihEOF, ErrSyntax},
 		{"too short", ":0000\n" + ihEOF, ErrSyntax},
 		{"too long", ":" + strings.Repeat("00", 261) + "\n" + ihEOF, ErrSyntax},
-		{"not hex", ":0G000001FF\n" + ihEOF, ErrSyntax},
+		{"not hex, low nibble", ":0G000001FF\n", ErrSyntax},
+		{"not hex, high nibble", ":G0000001FF\n", ErrSyntax},
 		{"count does not match", ":01000000FF\n" + ihEOF, ErrSyntax},
 		{"bad checksum", bad(good, 9) + ihEOF, ErrChecksum},
 		{"unknown type", ih(6, 0) + ihEOF, ErrSyntax},
@@ -129,7 +155,7 @@ func TestDecodeIHEX_Refusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			im, err := DecodeIHEX([]byte(c.text), DecodeOptions{})
+			im, err := guardedIHEX(t, c.text)
 			if !errors.Is(err, c.want) || im != nil {
 				t.Fatalf("image %v, err = %v, want %v", im, err, c.want)
 			}
@@ -196,6 +222,7 @@ func TestDecodeSREC_Refusals(t *testing.T) {
 		{"no digit", "SX" + data[2:] + end, ErrSyntax},
 		{"one byte line", "S\n" + end, ErrSyntax},
 		{"S4 is reserved", sr(4, 2, 0) + end, ErrSyntax},
+		{"S4 with no address and nothing after it", "S401FE\n", ErrSyntax},
 		{"odd length", data[:len(data)-2] + "\n" + end, ErrSyntax},
 		{"too short for its address", "S1030000\n" + end, ErrSyntax},
 		{"too long", "S1" + strings.Repeat("00", 257) + "\n" + end, ErrSyntax},
@@ -211,7 +238,7 @@ func TestDecodeSREC_Refusals(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			im, err := DecodeSREC([]byte(c.text), DecodeOptions{})
+			im, err := guardedSREC(t, c.text)
 			if !errors.Is(err, c.want) || im != nil {
 				t.Fatalf("image %v, err = %v, want %v", im, err, c.want)
 			}
@@ -377,6 +404,24 @@ func TestDecode_LimitIsCappedAtTwoGiB(t *testing.T) {
 	}
 	if c := newCollector(0); c.limit != DefaultMaxSize {
 		t.Errorf("default limit %d", c.limit)
+	}
+}
+
+func TestImage_EmptyImageAnswersWithoutCrashing(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("an empty image crashed instead of answering: %v", r)
+		}
+	}()
+	im := &Image{}
+	if im.Base() != 0 || im.Span() != 0 || im.Len() != 0 {
+		t.Errorf("base %d span %d len %d", im.Base(), im.Span(), im.Len())
+	}
+	if err := im.Shift(0x1000); err != nil || len(im.Segments) != 0 {
+		t.Errorf("shift: %v %v", err, im.Segments)
+	}
+	if b, base, err := im.Flat(0, 0); b != nil || base != 0 || err != nil {
+		t.Errorf("flat: %v %d %v", b, base, err)
 	}
 }
 

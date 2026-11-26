@@ -98,6 +98,19 @@ func TestParseUImage_Refusals(t *testing.T) {
 	}
 }
 
+// noCrash runs a reader on hostile input and reports a crash as a failed
+// assertion naming the case, so that a mutation of a guard fails a test on
+// what the guard is for rather than killing the test binary (see guarded).
+func noCrash[T any](t *testing.T, f func() (T, error)) (v T, err error) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("the reader crashed instead of refusing: %v", r)
+		}
+	}()
+	return f()
+}
+
 func TestComponents(t *testing.T) {
 	a, b, c := []byte("first"), []byte("second file"), []byte("x")
 	hdr := &UImageHeader{Type: TypeMulti}
@@ -132,7 +145,8 @@ func TestComponents(t *testing.T) {
 		"file of 4 GiB - 1":     binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, 0xFFFFFFFF), 0),
 		"padding past payload":  append(append(binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(binary.BigEndian.AppendUint32(nil, 1), 4), 0), 'a'), 0),
 	} {
-		if got, err := hdr.Components(p); !errors.Is(err, ErrRange) || got != nil {
+		got, err := noCrash(t, func() ([][]byte, error) { return hdr.Components(p) })
+		if !errors.Is(err, ErrRange) || got != nil {
 			t.Errorf("%s: %q %v", name, got, err)
 		}
 	}
@@ -147,7 +161,7 @@ func TestComponents_BombsAreRefusedUnderAMemoryLimit(t *testing.T) {
 	p := bytes.Repeat([]byte{0, 0, 0, 1}, 1<<20)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
-	got, err := hdr.Components(p)
+	got, err := noCrash(t, func() ([][]byte, error) { return hdr.Components(p) })
 	runtime.ReadMemStats(&after)
 	if !errors.Is(err, ErrRange) || got != nil {
 		t.Fatalf("%v %v", got, err)
@@ -230,7 +244,7 @@ func TestUImageImage(t *testing.T) {
 		"compressed": mustUImage(t, []byte("zz"), UImageOptions{Comp: CompGzip}),
 		"multi":      mustUImage(t, multi([]byte("a")), UImageOptions{Type: TypeMulti}),
 	} {
-		if im, err := UImageImage(in); err == nil || im != nil {
+		if im, err := noCrash(t, func() (*Image, error) { return UImageImage(in) }); err == nil || im != nil {
 			t.Errorf("%s: %v %v", name, im, err)
 		}
 	}
