@@ -107,6 +107,15 @@ type options struct {
 	// increment, and the later one on the command line wins, as in objcopy;
 	// --change-addresses also moves every section.
 	shift, startIncr string
+
+	// L3: memory regions, the gap warning, the check of the written file and
+	// the uImage time.
+	region   []string
+	gapWarn  uint64
+	noVerify bool
+	timeFlag string
+	stamp    uint32
+	errw     io.Writer // warnings
 }
 
 // hook is a flag whose value is handled by a function, so that two flags can
@@ -163,6 +172,7 @@ fwimg info FILE lists the header of a uImage the way mkimage -l does.`,
 				fmt.Fprintf(cmd.OutOrStdout(), "fwimg %s\n", version())
 				return nil
 			}
+			o.errw = cmd.ErrOrStderr()
 			return run(&o, args[0])
 		},
 	}
@@ -194,6 +204,10 @@ fwimg info FILE lists the header of a uImage the way mkimage -l does.`,
 	fl.StringVar(&o.ihexMode, "ihex-mode", "linear", "Intel HEX address records: linear (type 04, like srec_cat) or objcopy (type 02/03 below 1 MiB, 04/05 above)")
 	fl.StringVar(&o.srecAddrLen, "srec-addr-len", "32", "S-record address length: 16 (S1), 24 (S2), 32 (S3) or auto (objcopy's choice by the highest address)")
 	fl.BoolVar(&o.srecCount, "srec-count", false, "write an S5/S6 count record before the terminator, as srec_cat does")
+	fl.StringArrayVar(&o.region, "region", nil, "memory region NAME=START:SIZE (K, M, G suffixes); repeatable; refuse a segment that overflows a region or lies outside every one")
+	fl.Uint64Var(&o.gapWarn, "gap-warn", 8, "warn on stderr when a flat output (binary, uimage) holds more than this many times its data as filler, from 64 KiB of it; 0 turns the warning off")
+	fl.BoolVar(&o.noVerify, "no-verify", false, "do not read the output back and compare it with the image (the check is on by default)")
+	fl.StringVar(&o.timeFlag, "time", "", "uimage creation time in seconds, decimal or 0x-hex (default: SOURCE_DATE_EPOCH when set, else 0)")
 	cmd.AddCommand(&cobra.Command{
 		Use:   "info FILE",
 		Short: "List a uImage header the way mkimage -l does",
@@ -424,6 +438,19 @@ func run(o *options, input string) (err error) {
 		}
 	}
 
+	regions, err := fwimg.ParseRegions(o.region)
+	if err != nil {
+		return usageErr{err.Error()}
+	}
+	if o.timeFlag != "" && o.format != "uimage" {
+		return usageErr{"--time is only for -O uimage"}
+	}
+	if o.format == "uimage" {
+		if o.stamp, err = uimageTime(o.timeFlag); err != nil {
+			return err
+		}
+	}
+
 	data, release, err := inputBytes(input)
 	if err != nil {
 		return err
@@ -445,6 +472,26 @@ func run(o *options, input string) (err error) {
 		return err
 	}
 	im := src.img
+	// The layout of the ELF, for the messages that name what lies where: read
+	// only when one is written, and not once the addresses have been moved.
+	var lay *fwimg.Layout
+	var laid bool
+	layout := func() *fwimg.Layout {
+		if !laid {
+			laid = true
+			if src.elf && o.shift == "" && o.load == "" {
+				lay = fwimg.ELFLayout(data, o.useVaddr)
+			}
+		}
+		return lay
+	}
+	// explain adds what makes the hole to a refusal for size.
+	explain := func(err error) error {
+		if t := im.ExplainGap(layout()); t != "" && errors.Is(err, fwimg.ErrTooLarge) {
+			return fmt.Errorf("%w\n  %s", err, t)
+		}
+		return err
+	}
 
 	// The start address: the input's, unless --set-start/--entry gives one,
 	// then moved by --change-start (objcopy's order).
@@ -470,17 +517,23 @@ func run(o *options, input string) (err error) {
 	}
 	if o.pad != "" || o.gapFill != "" {
 		if err := im.GapFill(fo.Pad, fo.MaxSize); err != nil {
-			return err
+			return explain(err)
 		}
 	}
 	if o.padTo != "" {
 		if err := im.PadTo(padTo, fo.Pad, fo.MaxSize); err != nil {
+			return explain(err)
+		}
+	}
+	if len(regions) > 0 {
+		if err := im.CheckRegions(regions, func(lo, hi uint64) string { return layout().Describe(lo, hi) }); err != nil {
 			return err
 		}
 	}
 
 	var out []byte
 	var emit func(io.Writer) error // set when the output is streamed, not built
+	var uopts fwimg.UImageOptions
 	switch o.format {
 	case "binary":
 		// The refusal comes before the output file is touched; the segments are
@@ -505,15 +558,89 @@ func run(o *options, input string) (err error) {
 			out, err = fwimg.EncodeIHEXOpts(im, fwimg.IHEXOptions{Mode: ihexMode, CRLF: o.crlf})
 		}
 	case "uimage":
-		out, err = uimage(o, im, src, arch, hasEntry, entry, fo)
+		out, uopts, err = uimage(o, im, src, arch, hasEntry, entry, fo)
 	}
 	if err != nil {
-		return err
+		return explain(err)
+	}
+	if (o.format == "binary" || o.format == "uimage") && o.gapWarn != 0 {
+		if w := im.GapWarning(o.gapWarn); w != "" {
+			fmt.Fprintf(o.errw, "fwimg: warning: %s\n  %s\n", w, im.ExplainGap(layout()))
+		}
 	}
 	if emit == nil {
 		emit = func(w io.Writer) error { _, err := w.Write(out); return err }
 	}
-	return writeOutput(o.output, emit)
+	if err := writeOutput(o.output, emit); err != nil {
+		return err
+	}
+	if o.noVerify {
+		return nil
+	}
+	afterWrite(o.output)
+	if err := verifyOutput(o, im, fo.Pad, uopts); err != nil {
+		if rerr := removeFile(o.output); rerr != nil {
+			err = errors.Join(err, rerr)
+		}
+		return fmt.Errorf("%s: %w (the file was removed)", o.output, err)
+	}
+	return nil
+}
+
+// afterWrite is replaceable in tests: it runs once the output is written and
+// before it is read back, where a test damages the file.
+var afterWrite = func(string) {}
+
+// verifyOutput reads the file just written back and compares it with the image:
+// the flat binary byte for byte, an S-record or Intel HEX file decoded to an
+// image and compared by address with the start address, a uImage by its CRCs,
+// header and payload. Only a regular file is checked: a device, a pipe or a
+// symbolic link (/dev/stdout) cannot be read back, or removed, as this file can.
+func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptions) error {
+	if st, err := os.Lstat(o.output); err == nil && !st.Mode().IsRegular() {
+		return nil
+	}
+	if o.format == "binary" {
+		f, err := os.Open(o.output)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		return fwimg.VerifyFlat(f, im, pad)
+	}
+	b, err := readInput(o.output)
+	if err != nil {
+		return err
+	}
+	var got *fwimg.Image
+	dopts := fwimg.DecodeOptions{MaxSize: math.MaxInt32}
+	switch o.format {
+	case "uimage":
+		return fwimg.VerifyUImage(b, im, pad, uopts)
+	case "srec":
+		got, err = fwimg.DecodeSREC(b, dopts)
+	default:
+		got, err = fwimg.DecodeIHEX(b, dopts)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %v", fwimg.ErrVerify, err)
+	}
+	return fwimg.CompareImages(im, got)
+}
+
+// uimageTime is the creation time of a uImage: --time, else SOURCE_DATE_EPOCH
+// as mkimage reads it (but a value that is not seconds is refused where mkimage
+// writes 0), else 0 where mkimage takes the input file's mtime: the same
+// command line makes the same file.
+func uimageTime(flagValue string) (uint32, error) {
+	if flagValue != "" {
+		v, err := parseUint("time", flagValue, 32)
+		return uint32(v), err
+	}
+	if v, ok := os.LookupEnv("SOURCE_DATE_EPOCH"); ok {
+		return fwimg.ParseEpoch(v)
+	}
+	return 0, nil
 }
 
 // removeFile is replaceable in tests: a refused unlink cannot be provoked as
@@ -570,10 +697,7 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.Section
 			// data is ours and is not written to again: no copy of the image.
 			s.img, err = fwimg.ELFImageView(data, fo)
 		}
-		if err != nil {
-			return nil, err
-		}
-		s.elf, s.machine = true, ef.Machine
+		s.elf, s.machine = true, ef.Machine // an error is returned below, with the others
 	case fwimg.FormatIHEX:
 		s.img, err = fwimg.DecodeIHEX(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
 	case fwimg.FormatSREC:
@@ -592,10 +716,11 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.Section
 // uimage wraps the image in a uImage header. The architecture, OS and type
 // come from the flags, else from the input (an ELF's machine, a uImage's
 // header); an input that has none is refused rather than given ARM.
-func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, entry uint64, fo fwimg.FlattenOptions) ([]byte, error) {
+func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, entry uint64, fo fwimg.FlattenOptions) ([]byte, fwimg.UImageOptions, error) {
+	none := fwimg.UImageOptions{}
 	flat, base, err := im.Flat(fo.Pad, fo.MaxSize)
 	if err != nil {
-		return nil, err
+		return nil, none, err
 	}
 	osCode, typeCode := o.osCode, o.typeCode
 	switch {
@@ -606,19 +731,21 @@ func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, 
 	case src.elf:
 		arch = cmp.Or(arch, fwimg.ArchFromELF(src.machine))
 	case arch == 0:
-		return nil, usageErr{"--uimage-arch is required: the input does not say which architecture it is for"}
+		return nil, none, usageErr{"--uimage-arch is required: the input does not say which architecture it is for"}
 	}
 	if !hasEntry {
-		return nil, usageErr{"--entry is required: the input has no start address"}
+		return nil, none, usageErr{"--entry is required: the input has no start address"}
 	}
 	if base > math.MaxUint32 {
-		return nil, fmt.Errorf("image base 0x%x does not fit 32 bits: give --load", base)
+		return nil, none, fmt.Errorf("image base 0x%x does not fit 32 bits: give --load", base)
 	}
 	if entry > math.MaxUint32 {
-		return nil, fmt.Errorf("ELF entry 0x%x does not fit 32 bits: give --entry", entry)
+		return nil, none, fmt.Errorf("ELF entry 0x%x does not fit 32 bits: give --entry", entry)
 	}
-	return fwimg.UImage(flat, fwimg.UImageOptions{
+	opts := fwimg.UImageOptions{
 		Load: uint32(base), Entry: uint32(entry), Name: cmp.Or(o.name, im.Name),
-		OS: osCode, Arch: arch, Type: typeCode,
-	})
+		OS: osCode, Arch: arch, Type: typeCode, Time: o.stamp,
+	}
+	out, err := fwimg.UImage(flat, opts)
+	return out, opts, err
 }

@@ -184,8 +184,52 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 			fmt.Fprintf(w, "| %s | `%s` | %s | %s | %.1fx |\n", f.name, o.name, mr.Round(10*time.Microsecond), mo.Round(10*time.Microsecond), float64(mr)/float64(mo))
 		}
 	}
+	if err := verifyCost(w, t.fwimg, files, out, *rounds); err != nil {
+		return err
+	}
 	if *hello != "" {
 		return floor(w, t, *hello, *cobra, files[0].path, out, *rounds)
+	}
+	return nil
+}
+
+// verifyCost times each fwimg conversion with its default check of the written
+// file against the same command with --no-verify, interleaved, and prints what
+// the check adds: the table above includes it, this one says how much of it it
+// is. The check reads the output back, so it grows with the file.
+func verifyCost(w io.Writer, fwimg string, files []fixture, out string, rounds int) error {
+	fmt.Fprintf(w, "\nCost of reading the output back and comparing it (the default) against `--no-verify`; median wall time per process; %d rounds, interleaved\n\n", rounds)
+	fmt.Fprintln(w, "| file | operation | --no-verify | verified | cost |")
+	fmt.Fprintln(w, "|---|---|---:|---:|---:|")
+	for _, f := range files {
+		for _, o := range ops {
+			var off, on []time.Duration
+			for r := 0; r < rounds; r++ {
+				order := []bool{false, true} // true = with the check
+				if r%2 == 1 {
+					order = []bool{true, false}
+				}
+				for _, verified := range order {
+					args := o.ours(f.path, out)
+					if !verified {
+						args = append([]string{"--no-verify"}, args...)
+					}
+					argv := append([]string{fwimg}, args...)
+					d, err := timeOne(argv)
+					if err != nil {
+						return fmt.Errorf("%s %s on %s: %w", argv[0], o.name, f.name, err)
+					}
+					if verified {
+						on = append(on, d)
+					} else {
+						off = append(off, d)
+					}
+				}
+			}
+			a, b := median(off), median(on)
+			fmt.Fprintf(w, "| %s | `%s` | %s | %s | %s (%+.0f%%) |\n", f.name, o.name,
+				a.Round(10*time.Microsecond), b.Round(10*time.Microsecond), (b - a).Round(10*time.Microsecond), 100*float64(b-a)/float64(a))
+		}
 	}
 	return nil
 }

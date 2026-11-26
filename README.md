@@ -68,6 +68,38 @@ fwimg -O ihex --ihex-mode objcopy --crlf -o fw.hex fw.elf
   was dropped from Intel HEX before).
 * `--crlf` ends every line with CR LF, as objcopy and srec_cat do (LF by default).
 
+## Safety checks (v0.5.0)
+
+```
+fwimg -O binary --region FLASH=0x8000000:1M --region RAM=0x20000000:128K -o fw.bin fw.elf
+fwimg -O binary --gap-warn 4 -o fw.bin fw.elf            # warn when the hole is over 4x the payload
+fwimg -O binary --no-verify -o fw.bin fw.elf             # skip the read-back
+SOURCE_DATE_EPOCH=1700000000 fwimg -O uimage --load 0x80000 -o uImage fw.elf
+fwimg -O uimage --time 1700000000 --load 0x80000 -o uImage fw.elf
+```
+
+* **Gap diagnosis.** When the image would span far more than it holds, the
+  refusal names the `PT_LOAD` segments and sections on each side of the largest
+  gap with their LMA and VMA, and says which of `--use-vaddr` or `-R .data`
+  fits. Below the refusal threshold, `--gap-warn N` (default 8) prints a warning
+  when the hole is more than N times the payload. objcopy only warns on a
+  negative offset.
+* **`--region NAME=START:SIZE`** (repeatable, `K`/`M` suffixes) refuses a
+  segment that overflows its region or lies outside every region, naming the
+  segment and the byte excess, in the shape of ld's "region `X' overflowed by N
+  bytes".
+* **Verify after write** is on by default. The output is read back with the
+  decoders (binary, S-record, Intel HEX, uImage) and compared byte for byte and
+  address by address, start address included. On a mismatch the command fails and
+  no file is left behind. The file is written by unlink and create, as in
+  v0.4.2; verification is skipped for a non-regular output (device, symlink).
+  `--no-verify` turns it off; its cost is in the CI `bench` job summary.
+* **`SOURCE_DATE_EPOCH`** sets the uImage time, as mkimage does
+  (tools/imagetool.c). An invalid value is **refused** (mkimage writes 0).
+  `--time` overrides it. With neither, the time stays **0**, deterministic;
+  mkimage uses the input file's mtime instead, which is the one documented
+  difference.
+
 The library is `github.com/go-binfmt/fwimg`: `Flatten`, `SREC`, `IHEX`,
 `UImage`, the L2 additions `ELFImage`, `ELFSections` (with `SectionSelect`),
 `EncodeSRECOpts` and `EncodeIHEXOpts`, with `Image.GapFill`, `PadTo` and

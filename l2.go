@@ -270,16 +270,7 @@ func ELFSections(data []byte, sel SectionSelect, opts FlattenOptions) (*Image, e
 		if s.Flags&shfAlloc == 0 || s.Type == shtNobits || s.Type == 0 || s.Size == 0 || !sel.keep(s.Name) {
 			continue
 		}
-		lma := s.Addr
-		if !opts.UseVaddr {
-			for i := range progs {
-				p := &progs[i]
-				if p.Type == ptLoad && s.Off >= p.Off && s.Off-p.Off <= p.Filesz && s.Size <= p.Filesz-(s.Off-p.Off) && s.Addr >= p.Vaddr {
-					lma = s.Addr - p.Vaddr + p.Paddr
-					break
-				}
-			}
-		}
+		lma := sectionAddr(progs, &s, opts.UseVaddr)
 		if s.Size > math.MaxUint64-lma {
 			return nil, fmt.Errorf("%w: section %s address 0x%x size 0x%x", ErrAddrOverflow, s.Name, lma, s.Size)
 		}
@@ -299,6 +290,23 @@ func ELFSections(data []byte, sel SectionSelect, opts FlattenOptions) (*Image, e
 		im.Segments[i] = Segment{Addr: k.addr, Data: k.data}
 	}
 	return im, nil
+}
+
+// sectionAddr is where a section is placed: its virtual address with
+// useVaddr, else its load address (objcopy's LMA), which is its virtual address
+// moved by the offset between the virtual and physical address of the PT_LOAD
+// that holds its bytes. A section no segment holds keeps its virtual address.
+func sectionAddr(progs []elfpatch.Prog, s *elfpatch.Section, useVaddr bool) uint64 {
+	if useVaddr {
+		return s.Addr
+	}
+	for i := range progs {
+		p := &progs[i]
+		if p.Type == ptLoad && s.Off >= p.Off && s.Off-p.Off <= p.Filesz && s.Size <= p.Filesz-(s.Off-p.Off) && s.Addr >= p.Vaddr {
+			return s.Addr - p.Vaddr + p.Paddr
+		}
+	}
+	return s.Addr
 }
 
 // ErrNoSections reports a section selection that left nothing to write.

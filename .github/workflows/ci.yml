@@ -63,6 +63,10 @@ jobs:
         run: go test -run '^$' -fuzz '^FuzzSREC$' -fuzztime 60s .
       - name: fuzz FuzzUImage for 60 seconds
         run: go test -run '^$' -fuzz '^FuzzUImage$' -fuzztime 60s .
+      - name: fuzz FuzzVerifyFlat for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzVerifyFlat$' -fuzztime 60s .
+      - name: fuzz FuzzParseRegion for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzParseRegion$' -fuzztime 60s .
 
   # s390x is BIG-ENDIAN; the ELF parser and the encoders run under that byte
   # order here.
