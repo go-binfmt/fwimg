@@ -60,13 +60,13 @@ func TestSectionSelect(t *testing.T) {
 
 func mem(segs ...Segment) *Image { return &Image{Segments: segs} }
 
-// noPanic runs f and reports a panic as a failed assertion: a refusal that is
+// noPanic runs f and reports a crash as a failed assertion: a refusal that is
 // only held by a crash further down is not a test of the refusal.
 func noPanic(t *testing.T, what string, f func()) {
 	t.Helper()
 	defer func() {
 		if r := recover(); r != nil {
-			t.Errorf("%s: panicked: %v", what, r)
+			t.Errorf("%s: the refusal is missing, the code crashed instead: %v", what, r)
 		}
 	}()
 	f()
