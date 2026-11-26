@@ -98,17 +98,28 @@ func Flatten(r io.ReaderAt, size int64, opts FlattenOptions) ([]byte, uint64, er
 	if n, err := r.ReadAt(data, 0); err != nil && !(err == io.EOF && n == len(data)) {
 		return nil, 0, fmt.Errorf("read ELF: %w", err)
 	}
-	return FlattenBytes(data, opts)
+	return flatten(data, opts, false)
 }
 
 // FlattenBytes is Flatten for an image already in memory (at most 2 GiB, the
 // bound elfpatch.Parse holds); the segments are copied out of data.
 func FlattenBytes(data []byte, opts FlattenOptions) ([]byte, uint64, error) {
-	im, err := ELFImage(data, opts)
+	return flatten(data, opts, true)
+}
+
+// flatten is Flatten of an image in memory. A lone segment comes back from
+// Flat as it is, a slice of data: clone says whether data is the caller's
+// (copy it out) or Flatten's own read (hand it over).
+func flatten(data []byte, opts FlattenOptions, clone bool) ([]byte, uint64, error) {
+	im, err := ELFImageView(data, opts)
 	if err != nil {
 		return nil, 0, err
 	}
-	return im.Flat(opts.Pad, opts.MaxSize)
+	out, base, err := im.Flat(opts.Pad, opts.MaxSize)
+	if clone && len(im.Segments) == 1 {
+		out = slices.Clone(out)
+	}
+	return out, base, err
 }
 
 // --- Motorola S-record (SREC) -------------------------------------------------
