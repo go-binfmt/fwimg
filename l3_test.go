@@ -155,9 +155,17 @@ func TestExplainGap(t *testing.T) {
 }
 
 func TestELFLayoutAndDescribe(t *testing.T) {
-	if ELFLayout([]byte("not an elf"), false) != nil {
-		t.Error("a layout of garbage")
-	}
+	func() {
+		// A recovered panic is reported as the assertion it stands for.
+		defer func() {
+			if r := recover(); r != nil {
+				t.Errorf("ELFLayout of garbage panics: %v", r)
+			}
+		}()
+		if ELFLayout([]byte("not an elf"), false) != nil {
+			t.Error("a layout of garbage")
+		}
+	}()
 	var nilLayout *Layout
 	if nilLayout.Describe(0, 1<<63) != "" || nilLayout.hint(0, 1) != "" {
 		t.Error("a nil layout describes something")
@@ -393,6 +401,17 @@ func TestVerifyFlat(t *testing.T) {
 	}
 	if err := VerifyFlat(&failingReader{good, boom}, im, 0xA5); err != boom {
 		t.Errorf("read error at the end: %v", err)
+	}
+	// A file that ends inside a hole, and a reader that fails there.
+	holey := mem(sg(0x1000, "ab"), sg(0x1000+2+3*verifyChunk, "c"))
+	hfile := flatOf(t, holey, 0x22)
+	for _, cut := range []int{3, 2 + verifyChunk, 2 + 2*verifyChunk + 1} {
+		if err := VerifyFlat(bytes.NewReader(hfile[:cut]), holey, 0x22); !errors.Is(err, ErrVerify) || !strings.Contains(err.Error(), "ends before") {
+			t.Errorf("cut inside the hole at %d: %v", cut, err)
+		}
+		if err := VerifyFlat(&failingReader{hfile[:cut], boom}, holey, 0x22); err != boom {
+			t.Errorf("read error inside the hole at %d: %v", cut, err)
+		}
 	}
 	// Several chunks, and a hole longer than one chunk.
 	n := 3*verifyChunk + 123

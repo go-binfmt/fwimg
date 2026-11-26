@@ -4,6 +4,7 @@ import (
 	"debug/elf"
 	"encoding/binary"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -256,11 +257,22 @@ func TestL3_VerifyCatchesAWrongFile(t *testing.T) {
 	removeFile = os.Remove
 
 	// A file that is gone when it is read back is an error, for every format.
+	// The error is the open or read error itself, not a mismatch.
 	corrupt(t, func(p string) { _ = os.Remove(p) })
-	for _, f := range []string{"binary", "srec", "uimage"} {
-		if _, _, err := runCmd(t, "-O", f, "-o", out(t), in); err == nil {
-			t.Errorf("%s: a vanished output passed", f)
+	removeFile = func(string) error { return nil }
+	for _, f := range []string{"binary", "srec", "ihex", "uimage"} {
+		_, _, err := runCmd(t, "-O", f, "-o", out(t), in)
+		if !errors.Is(err, fs.ErrNotExist) || errors.Is(err, fwimg.ErrVerify) {
+			t.Errorf("%s: a vanished output: %v", f, err)
 		}
+	}
+	removeFile = os.Remove
+
+	// A write that fails is reported as it is: nothing is read back or removed.
+	corrupt(t, func(string) { t.Error("an output that was not written was checked") })
+	_, _, err := runCmd(t, "-o", filepath.Join(t.TempDir(), "missing", "x"), in)
+	if !errors.Is(err, fs.ErrNotExist) || strings.Contains(err.Error(), "removed") {
+		t.Errorf("an unwritable output: %v", err)
 	}
 }
 

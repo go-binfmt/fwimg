@@ -381,7 +381,8 @@ func VerifyFlat(r io.Reader, im *Image, pad byte) error {
 	expect := func(want []byte) error {
 		for len(want) > 0 {
 			got := buf[:min(len(want), len(buf))]
-			if _, err := io.ReadFull(r, got); err == io.EOF || err == io.ErrUnexpectedEOF {
+			if n, err := io.ReadFull(r, got); err == io.EOF || err == io.ErrUnexpectedEOF {
+				at += uint64(n) // the address the file stopped at
 				return mismatch("the file ends before address 0x%x", at)
 			} else if err != nil {
 				return err
