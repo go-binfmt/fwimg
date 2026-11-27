@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/go-binfmt/fwimg"
 )
 
 // Each refusal of the FIT code has a case that names it: the message says which
@@ -105,10 +107,34 @@ func TestFITInfoVerifyGuards(t *testing.T) {
 	}
 }
 
-func TestFITCheck(t *testing.T) {
-	if err := fitCheck([]byte("not a FIT")); err == nil {
-		t.Error("garbage passed fitCheck")
+// noPanic reports a crash as a failed assertion: a refusal that is only held by
+// a crash further down is not a test of the refusal.
+func noPanic(t *testing.T, what string, f func()) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s: the refusal is missing, the code crashed instead: %v", what, r)
+		}
+	}()
+	f()
+}
+
+// A uImage for an architecture the FIT specification has no name for cannot
+// become a FIT, and the refusal says which code.
+func TestFITUnnamedArch(t *testing.T) {
+	in := uimageFile(t, []byte("data"), fwimg.UImageOptions{Arch: 4, Load: 0x100, Entry: 0x100})
+	_, _, err := runCmd(t, "-O", "fit", "-o", filepath.Join(t.TempDir(), "o.fit"), in)
+	if err == nil || !strings.Contains(err.Error(), "architecture code 4 has no FIT name") || !errors.As(err, new(usageErr)) {
+		t.Fatalf("error %v", err)
 	}
+}
+
+func TestFITCheck(t *testing.T) {
+	noPanic(t, "fitCheck on garbage", func() {
+		if err := fitCheck([]byte("not a FIT")); err == nil {
+			t.Error("garbage passed fitCheck")
+		}
+	})
 	dir := t.TempDir()
 	fit := filepath.Join(dir, "k.fit")
 	if _, _, err := runCmd(t, "-O", "fit", "-o", fit, simple(t)); err != nil {
