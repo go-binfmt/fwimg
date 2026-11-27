@@ -62,12 +62,12 @@ func (c *counter) Write(p []byte) (int, error) {
 }
 
 // The write has a budget of its own, independent of CheckFlat: with CheckFlat
-// out of the way (writeFlat is called directly), two segments 128 TiB apart
-// reach the sink for at most limit bytes and then ErrTooLarge, never the whole
+// out of the way (writeFlat is called directly), two segments 4 GiB apart
+// (kept small so that a write which lost its budget ends fast) reach the sink for at most limit bytes and then ErrTooLarge, never the whole
 // distance. A span exactly at the limit still writes in full. Nothing touches
 // a disk: the sink only counts.
 func TestWriteFlatBudgetStopsWithoutCheckFlat(t *testing.T) {
-	far := &Image{Segments: []Segment{{Addr: 0, Data: []byte{1}}, {Addr: 1 << 47, Data: []byte{2}}}}
+	far := &Image{Segments: []Segment{{Addr: 0, Data: []byte{1}}, {Addr: 1 << 32, Data: []byte{2}}}}
 	for _, limit := range []uint64{0, 1, 2, flatChunk - 1, flatChunk, 3*flatChunk + 5} {
 		var c counter
 		err := far.writeFlat(&c, 0, 0, limit)
