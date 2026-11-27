@@ -142,6 +142,15 @@ playground page on the go-binfmt docs site. Prior art: no playground in
 `go-tex.github.io/.github/workflows/playground.yml`, reused rather than
 redesigned.
 
+**Done in v0.8.0.** The js/wasm and wasip1 builds are in CI; the test
+`TestWasmSameBytesAsNative` compares exit code, stdout, stderr and output
+bytes with the native build over 96 CLI cases and 160 playground-engine cases.
+**Change from the brief:** go-tex's `playground.yml` is a test workflow for a
+Go-widgets app, not reusable here. The browser engine runs the real CLI over
+an in-memory file system (`playground/engine.js`) instead of a second
+`syscall/js` entry, so there is one code path and the bytes are the same by
+construction.
+
 ## L7 — FIT (go-binfmt/fdt v0.1.0, then fwimg v0.9.0)
 
 1. New repository `go-binfmt/fdt`: DTB v17 reader and writer (spec-notes

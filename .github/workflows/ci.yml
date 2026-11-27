@@ -139,6 +139,8 @@ jobs:
           - { goos: freebsd, goarch: amd64 }
           - { goos: netbsd,  goarch: amd64 }
           - { goos: openbsd, goarch: amd64 }
+          - { goos: js,      goarch: wasm }
+          - { goos: wasip1,  goarch: wasm }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -149,6 +151,53 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: go build ./...
+
+  # wasm (go-binfmt/fwimg, L6): the js/wasm build under node and the wasip1 build
+  # under wazero write the same bytes as the native build, over one corpus, and
+  # so does the playground engine (the js build on an in-memory file system).
+  # FWIMG_REQUIRE_WASM turns a missing node or runtime into a failure.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - uses: actions/setup-node@v7
+        with: { node-version: '24' }
+      # wazero, pinned: the Go distribution's wasip1 wrapper runs it by name.
+      - name: wazero
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/tetratelabs/wazero/cmd/wazero@v1.12.0 && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: same bytes as the native build (js under node, wasip1 under wazero, playground engine)
+        env: { FWIMG_REQUIRE_WASM: "1", GOWASIRUNTIME: wazero }
+        run: go test -count=1 -v -run 'TestWasmSameBytesAsNative' ./cmd/fwimg
+      - name: the size of the .wasm
+        run: |
+          set -eu
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/fwimg.wasm" ./cmd/fwimg
+          gzip -9 -c "$RUNNER_TEMP/fwimg.wasm" > "$RUNNER_TEMP/fwimg.wasm.gz"
+          echo "fwimg.wasm (js, -s -w): $(stat -c %s "$RUNNER_TEMP/fwimg.wasm") bytes, gzip -9: $(stat -c %s "$RUNNER_TEMP/fwimg.wasm.gz") bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # wasm against native, single core, interleaved rounds (not a gate: the table
+  # is printed into the job summary and README quotes it).
+  wasm-bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version: '1.27.4' }
+      - uses: actions/setup-node@v7
+        with: { node-version: '24' }
+      - name: wazero
+        run: GOBIN="$RUNNER_TEMP/bin" go install github.com/tetratelabs/wazero/cmd/wazero@v1.12.0 && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: |
+          set -o pipefail
+          go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
+          GOOS=js GOARCH=wasm go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/fwimg-js.wasm" ./cmd/fwimg
+          GOOS=wasip1 GOARCH=wasm go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/fwimg-wasip1.wasm" ./cmd/fwimg
+          go build -o "$RUNNER_TEMP/wasmbench" ./internal/wasmbench
+          uptime
+          taskset -c 0 "$RUNNER_TEMP/wasmbench" -native "$RUNNER_TEMP/fwimg" -js "$RUNNER_TEMP/fwimg-js.wasm" -wasi "$RUNNER_TEMP/fwimg-wasip1.wasm" -rounds 15 | tee "$RUNNER_TEMP/wasmbench.md"
+          cat "$RUNNER_TEMP/wasmbench.md" >> "$GITHUB_STEP_SUMMARY"
 
   darwin:
     name: test (macOS)

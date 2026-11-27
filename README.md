@@ -352,6 +352,45 @@ The 32 MiB row is now even to 1.2x between runs; the 4 MiB row is behind by
 about 0.3 ms, a start-up cost of the Go runtime (some 330 more page faults
 than objcopy), the same one as the 1 KiB rows.
 
+## WebAssembly and the playground (v0.8.0)
+
+The CLI builds for `GOOS=js GOARCH=wasm` (a browser or node) and
+`GOOS=wasip1 GOARCH=wasm` (wazero, wasmtime). Each release carries
+`fwimg-js-wasm.wasm`, `fwimg-wasip1-wasm.wasm`, the `fwimg-wasm_exec.js` of the
+toolchain that built them and `fwimg-playground.js`, the engine that runs the
+CLI over an in-memory file system. The docs site has a
+[playground](https://go-binfmt.github.io/docs/fwimg-playground/) that converts
+a file in your browser: nothing is uploaded, input is bounded to 32 MiB.
+
+`TestWasmSameBytesAsNative` builds the three targets and asserts the same exit
+code, stdout, stderr and output bytes on every case (needs node; the wasip1
+half needs wazero or wasmtime via `GOWASIRUNTIME`; `FWIMG_REQUIRE_WASM=1`
+turns a missing one into a failure, as CI does).
+
+Time against native, one core, medians of interleaved rounds
+(`internal/wasmbench`; the table is produced by the `wasm-bench` CI job):
+
+| input | operation | native | js (node) | x native | wasip1 (wazero) | x native |
+|---|---|---:|---:|---:|---:|---:|
+| 1 KiB | -O binary | 22.39ms | 338.14ms | 15.1 | 175.57ms | 7.8 |
+| 1 KiB | -O srec | 1.65ms | 103.48ms | 62.7 | 95.83ms | 58.0 |
+| 1 KiB | -O uimage | 71.85ms | 406.39ms | 5.7 | 387.67ms | 5.4 |
+| 4 MiB | -O binary | 24.19ms | 367.23ms | 15.2 | 194.54ms | 8.0 |
+| 4 MiB | -O srec | 18.73ms | 210.85ms | 11.3 | 192.03ms | 10.3 |
+| 4 MiB | -O uimage | 77.21ms | 418.48ms | 5.4 | 476.3ms | 6.2 |
+| 32 MiB | -O binary | 32.38ms | 428.08ms | 13.2 | 255ms | 7.9 |
+| 32 MiB | -O srec | 138.8ms | 709.7ms | 5.1 | 862.72ms | 6.2 |
+| 32 MiB | -O uimage | 107.7ms | 495.8ms | 4.6 | 628.03ms | 5.8 |
+
+GitHub-hosted runner (PR #27, `wasm-bench` job), one core, a noisy shared
+machine: the native 1 KiB `-O binary` and `-O uimage` rows (22 and 72 ms,
+against 1.65 ms for `-O srec`) are runner noise, not fwimg, so the ratios of
+those two rows are not to be read. Every wasm run is a process that starts
+node or wazero and compiles the module (a 100 to 400 ms floor, the 1 KiB
+rows); at 32 MiB wasm is 4.6x to 13x slower than native. That is an open
+defect on the performance rule, not a gate. The module
+is 7.2 MB (1.9 MB with `gzip -9`).
+
 ## Development
 
 ```
