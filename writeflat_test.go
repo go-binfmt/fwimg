@@ -49,9 +49,17 @@ func TestWriteFlatEqualsFlat(t *testing.T) {
 
 // counter takes every byte and keeps none: a test writes to it what it would
 // not dare write to a disk.
+// It refuses past 4 MiB, so that a write which lost its budget fails fast
+// instead of copying 128 TiB through the loop.
 type counter struct{ n uint64 }
 
-func (c *counter) Write(p []byte) (int, error) { c.n += uint64(len(p)); return len(p), nil }
+func (c *counter) Write(p []byte) (int, error) {
+	if c.n+uint64(len(p)) > 4<<20 {
+		return 0, errors.New("counter: sink overflow")
+	}
+	c.n += uint64(len(p))
+	return len(p), nil
+}
 
 // The write has a budget of its own, independent of CheckFlat: with CheckFlat
 // out of the way (writeFlat is called directly), two segments 128 TiB apart
