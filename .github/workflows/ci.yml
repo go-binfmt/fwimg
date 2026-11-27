@@ -208,8 +208,11 @@ jobs:
       # uf2conv.py, the UF2 reference (microsoft/uf2 at a pinned commit).
       - run: |
           mkdir -p "$RUNNER_TEMP/uf2"
-          curl -fsSL "https://raw.githubusercontent.com/microsoft/uf2/70fdee51cf15a487526e88ada2d52346596f80af/utils/uf2conv.py" -o "$RUNNER_TEMP/uf2/uf2conv.py"
+          for f in uf2conv.py uf2families.json; do
+            curl -fsSL "https://raw.githubusercontent.com/microsoft/uf2/70fdee51cf15a487526e88ada2d52346596f80af/utils/$f" -o "$RUNNER_TEMP/uf2/$f"
+          done
       - run: |
+          set -o pipefail
           go build -o "$RUNNER_TEMP/fwimg" ./cmd/fwimg
           go build -o "$RUNNER_TEMP/hello" ./internal/floor/hello
           go build -o "$RUNNER_TEMP/cobraonly" ./internal/floor/cobraonly

@@ -55,7 +55,7 @@ func l5Ops(t tools) []op {
 				return []string{t.objcopy, "-O", "verilog", elf, out}
 			},
 			ours: func(elf, out string) []string { return []string{"-O", "verilog", "-o", out, elf} }},
-		{name: "-O uimage --uimage-comp gzip (mkimage -C gzip: flat file in)",
+		{name: "-O uimage --uimage-comp gzip (mkimage -C gzip only tags ih_comp and does not compress: it does less work)",
 			ref: func(t tools, _, flat, out string) []string {
 				return []string{t.mkimage, "-A", "arm", "-O", "linux", "-T", "kernel", "-C", "gzip",
 					"-a", "0x80000", "-e", "0x80000", "-n", "fw", "-d", flat, out}
