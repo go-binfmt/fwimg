@@ -352,6 +352,26 @@ The 32 MiB row is now even to 1.2x between runs; the 4 MiB row is behind by
 about 0.3 ms, a start-up cost of the Go runtime (some 330 more page faults
 than objcopy), the same one as the 1 KiB rows.
 
+## WebAssembly and the playground (v0.8.0)
+
+The CLI builds for `GOOS=js GOARCH=wasm` (a browser or node) and
+`GOOS=wasip1 GOARCH=wasm` (wazero, wasmtime). Each release carries
+`fwimg-js-wasm.wasm`, `fwimg-wasip1-wasm.wasm`, the `fwimg-wasm_exec.js` of the
+toolchain that built them and `fwimg-playground.js`, the engine that runs the
+CLI over an in-memory file system. The docs site has a
+[playground](https://go-binfmt.github.io/docs/fwimg-playground/) that converts
+a file in your browser: nothing is uploaded, input is bounded to 32 MiB.
+
+`TestWasmSameBytesAsNative` builds the three targets and asserts the same exit
+code, stdout, stderr and output bytes on every case (needs node; the wasip1
+half needs wazero or wasmtime via `GOWASIRUNTIME`; `FWIMG_REQUIRE_WASM=1`
+turns a missing one into a failure, as CI does).
+
+Time against native, one core, medians of interleaved rounds
+(`internal/wasmbench`; the table is produced by the `wasm-bench` CI job):
+
+WASM_TABLE
+
 ## Development
 
 ```

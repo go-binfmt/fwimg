@@ -2,7 +2,22 @@
 
 Versions are `vMAJOR.MINOR.PATCH`; below v1 a breaking change bumps the MINOR.
 
-## v0.7.0
+## v0.8.0
+
+WebAssembly (ROADMAP lot L6):
+
+* `GOOS=js GOARCH=wasm` and `GOOS=wasip1 GOARCH=wasm` builds of the CLI, in CI
+  and attached to the release (`fwimg-js-wasm.wasm`, `fwimg-wasip1-wasm.wasm`,
+  with the matching `fwimg-wasm_exec.js`).
+* `playground/engine.js` (release asset `fwimg-playground.js`): runs the
+  CLI in a browser or node over an in-memory file system; input bounded to
+  32 MiB, `--max-size` defaulting to 128 MiB, a new instance per run.
+* A same-bytes test, wasm against native (exit code, stdout, stderr, output
+  bytes), under node and a wasip1 runtime (wazero); required in CI.
+* `internal/wasmbench`: wasm against native timings at 1 KiB, 4 MiB, 32 MiB.
+* A client-side playground on the go-binfmt docs site.
+
+No change to the CLI or the library.
 
 New formats (ROADMAP lot L5):
 
