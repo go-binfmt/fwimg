@@ -493,6 +493,19 @@ func VerifyUImage(written []byte, im *Image, pad byte, want UImageOptions) error
 	if h.Load != want.Load || h.Entry != want.Entry || h.Time != want.Time {
 		return mismatch("the header has load 0x%x, entry 0x%x, time %d; wanted 0x%x, 0x%x, %d", h.Load, h.Entry, h.Time, want.Load, want.Entry, want.Time)
 	}
+	if h.Comp != want.Comp {
+		return mismatch("the header has compression %d, wanted %d", h.Comp, want.Comp)
+	}
+	if h.Comp != CompNone {
+		// The payload is read back through the decompressor, bounded by the
+		// size of the image it must equal (one byte more, so that an expansion
+		// past it is seen and refused, not cut).
+		raw, err := DecompressPayload(payload, h.Comp, im.Span()+1)
+		if err != nil {
+			return mismatch("%v", err)
+		}
+		payload = raw
+	}
 	return VerifyFlat(bytes.NewReader(payload), im, pad)
 }
 

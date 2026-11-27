@@ -248,8 +248,8 @@ func TestUImageImage(t *testing.T) {
 			t.Errorf("%s: %v %v", name, im, err)
 		}
 	}
-	if _, err := UImageImage(mustUImage(t, []byte("zz"), UImageOptions{Comp: CompGzip})); !errors.Is(err, ErrFormat) {
-		t.Errorf("compressed: %v", err)
+	if _, err := UImageImage(mustUImage(t, []byte("zz"), UImageOptions{Comp: CompGzip})); !errors.Is(err, ErrSyntax) {
+		t.Errorf("a gzip payload that is not gzip: %v", err)
 	}
 	if _, err := UImageImage(mustUImage(t, []byte("zz"), UImageOptions{Comp: 99})); !errors.Is(err, ErrFormat) {
 		t.Errorf("unknown compression: %v", err)

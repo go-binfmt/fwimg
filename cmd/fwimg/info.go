@@ -16,11 +16,15 @@ import (
 type inputFlags struct {
 	format, base, maxSize string
 	useVaddr              bool
+	vwidth                int
+	vendian               string
 }
 
 func (f *inputFlags) bind(cmd *cobra.Command) {
 	fl := cmd.Flags()
-	fl.StringVarP(&f.format, "input-target", "I", "", "input format: elf, ihex, srec, uimage, binary (default: detected; binary is never detected)")
+	fl.StringVarP(&f.format, "input-target", "I", "", "input format: elf, ihex, srec, uimage, uf2, verilog, binary (default: detected; binary is never detected)")
+	fl.IntVar(&f.vwidth, "verilog-data-width", 1, "data width in bytes of a Verilog input, 1 to 8")
+	fl.StringVar(&f.vendian, "verilog-endian", "", "byte order within a word of a Verilog input: little (default) or big")
 	fl.StringVar(&f.base, "base", "", "load address of a raw binary input, decimal or 0x-hex (required with -I binary)")
 	fl.BoolVar(&f.useVaddr, "use-vaddr", false, "place ELF segments by virtual address instead of load address")
 	fl.StringVar(&f.maxSize, "max-size", "", "largest image in bytes from lowest to highest address (default 256 MiB)")
@@ -29,9 +33,9 @@ func (f *inputFlags) bind(cmd *cobra.Command) {
 // checkInput validates -I and --base and returns the address of a raw binary.
 func checkInput(format, base string) (uint64, error) {
 	switch format {
-	case "", fwimg.FormatELF, fwimg.FormatIHEX, fwimg.FormatSREC, fwimg.FormatUImage, fwimg.FormatBinary:
+	case "", fwimg.FormatELF, fwimg.FormatIHEX, fwimg.FormatSREC, fwimg.FormatUImage, fwimg.FormatUF2, fwimg.FormatVerilog, fwimg.FormatBinary:
 	default:
-		return 0, usageErr{fmt.Sprintf("unknown --input-target %q (want elf, ihex, srec, uimage, binary)", format)}
+		return 0, usageErr{fmt.Sprintf("unknown --input-target %q (want elf, ihex, srec, uimage, uf2, verilog, binary)", format)}
 	}
 	switch {
 	case format == fwimg.FormatBinary && base == "":
@@ -47,6 +51,7 @@ func checkInput(format, base string) (uint64, error) {
 // loaded is an input read for info and verify.
 type loaded struct {
 	im     *fwimg.Image
+	stored *fwimg.Image // a uImage as stored, compressed or not; nil for any other input
 	src    *source
 	format string
 	data   []byte
@@ -82,10 +87,18 @@ func (f *inputFlags) with(input string, fn func(*loaded) error) (err error) {
 	l := &loaded{format: in, data: data, maxSz: fo.MaxSize}
 	if in == fwimg.FormatUImage {
 		l.src = &source{}
-		if l.im, err = fwimg.UImageStored(data); err != nil {
+		if l.stored, err = fwimg.UImageStored(data); err != nil {
 			return fmt.Errorf("%s: %w", input, err)
 		}
-	} else if l.src, err = load(in, data, fo, fwimg.SectionSelect{}, rawBase, input); err != nil {
+		l.im = l.stored
+		if l.stored.UImage.Comp != fwimg.CompNone {
+			// The manifest and verify describe the program, not its gzip or lz4
+			// form: the image a conversion wrote the manifest for.
+			if l.im, err = fwimg.UImageImageOpts(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize}); err != nil {
+				return fmt.Errorf("%s: %w", input, err)
+			}
+		}
+	} else if l.src, err = load(in, data, fo, fwimg.SectionSelect{}, rawBase, input, fwimg.VerilogOptions{DataWidth: f.vwidth, BigEndian: f.vendian == "big"}); err != nil {
 		return err
 	} else {
 		l.im = l.src.img
@@ -158,7 +171,7 @@ schema is manifest-1.schema.json, see the README), for every format.`,
 			return f.with(args[0], func(l *loaded) error {
 				out := cmd.OutOrStdout()
 				if l.format == fwimg.FormatUImage && !asJSON {
-					comps, err := l.im.UImage.Components(payload(l.im))
+					comps, err := l.stored.UImage.Components(payload(l.stored))
 					if err != nil {
 						return fmt.Errorf("%s: %w", args[0], err)
 					}

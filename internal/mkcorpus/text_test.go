@@ -20,6 +20,15 @@ func TestTextSeedsMeanWhatTheirNamesSay(t *testing.T) {
 	}{
 		{"FuzzIHEX", ihexSeeds(), func(b []byte) error { _, err := fwimg.DecodeIHEX(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
 		{"FuzzSREC", srecSeeds(), func(b []byte) error { _, err := fwimg.DecodeSREC(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
+		{"FuzzUF2", uf2Seeds(), func(b []byte) error { _, err := fwimg.DecodeUF2(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
+		{"FuzzVerilog", verilogSeeds(), func(b []byte) error {
+			_, err := fwimg.DecodeVerilog(b[1:], verilogConfig(b[0]), fwimg.DecodeOptions{MaxSize: 1 << 10})
+			return err
+		}},
+		{"FuzzUImageComp", uimageCompSeeds(), func(b []byte) error {
+			_, err := fwimg.UImageImageOpts(b, fwimg.DecodeOptions{MaxSize: 1 << 10})
+			return err
+		}},
 		{"FuzzUImage", uimageSeeds(), func(b []byte) error {
 			h, p, err := fwimg.ParseUImage(b)
 			if err == nil {
@@ -42,7 +51,7 @@ func TestTextSeedsReproduceTheCommittedCorpus(t *testing.T) {
 	if err := all(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{"FuzzFlatten", "FuzzIHEX", "FuzzSREC", "FuzzUImage"} {
+	for _, d := range []string{"FuzzFlatten", "FuzzIHEX", "FuzzSREC", "FuzzUImage", "FuzzUF2", "FuzzVerilog", "FuzzUImageComp"} {
 		made, err := os.ReadDir(filepath.Join(dir, d))
 		if err != nil {
 			t.Fatal(err)

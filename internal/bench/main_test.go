@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,8 +44,10 @@ func TestRunTable(t *testing.T) {
 	}
 	// One row per operation in the main table and one per operation in the
 	// table of what the check of the output costs.
-	if n := strings.Count(w.String(), "| fx |"); n != 2*len(ops)+len(decodeOps) {
-		t.Errorf("%d rows, want %d:\n%s", n, 2*len(ops)+len(decodeOps), w.String())
+	// The main table also has the v0.7.0 rows (two without -uf2conv).
+	want := 2*len(ops) + len(l5Ops(tools{})) + len(decodeOps)
+	if n := strings.Count(w.String(), "| fx |"); n != want {
+		t.Errorf("%d rows, want %d:\n%s", n, want, w.String())
 	}
 	if !strings.Contains(w.String(), "| file | operation | --no-verify | verified | cost |") {
 		t.Errorf("no table of the cost of the check:\n%s", w.String())
@@ -280,10 +283,10 @@ func TestVerdict(t *testing.T) {
 }
 
 func TestOpsBuildArgv(t *testing.T) {
-	tl := tools{"objcopy", "mkimage", "fwimg"}
-	for _, o := range ops {
+	tl := tools{objcopy: "objcopy", mkimage: "mkimage", fwimg: "fwimg", uf2conv: "uf2conv.py"}
+	for _, o := range append(slices.Clone(ops), l5Ops(tl)...) {
 		ref := o.ref(tl, "in.elf", "flat", "out")
-		if ref[0] != "objcopy" && ref[0] != "mkimage" {
+		if ref[0] != "objcopy" && ref[0] != "mkimage" && ref[0] != "python3" {
 			t.Errorf("%s: reference argv %v", o.name, ref)
 		}
 		if got := o.ours("in.elf", "out"); got[len(got)-1] != "in.elf" {

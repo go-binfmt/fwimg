@@ -13,7 +13,7 @@ var (
 	// ErrChecksum: a record checksum, or a uImage CRC, does not match.
 	ErrChecksum = errors.New("fwimg: checksum mismatch")
 	// ErrUnknownFormat: the input is none of the formats Detect knows.
-	ErrUnknownFormat = errors.New("fwimg: input is not ELF, Intel HEX, S-record or uImage")
+	ErrUnknownFormat = errors.New("fwimg: input is not ELF, Intel HEX, S-record, uImage, UF2 or Verilog hex")
 )
 
 // DecodeOptions bounds a decoder.

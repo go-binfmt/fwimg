@@ -120,6 +120,15 @@ type options struct {
 	// L4: the manifest file.
 	manifest string
 	errw     io.Writer // warnings
+
+	// L5: uImage compression, UF2 family, Verilog data width and byte order.
+	uimageComp    string
+	uf2Family     string
+	verilogWidth  int
+	verilogEndian string
+
+	family uint32               // --uf2-family, parsed
+	vopts  fwimg.VerilogOptions // the Verilog options, once the input is known
 }
 
 // hook is a flag whose value is handled by a function, so that two flags can
@@ -186,9 +195,9 @@ manifest) and fwimg verify --manifest FILE IMAGE checks an image against one.`,
 	fl := cmd.Flags()
 	fl.Bool("version", false, "print the version")
 	fl.StringVarP(&o.output, "output", "o", "", "output file (required)")
-	fl.StringVarP(&o.input, "input-target", "I", "", "input format: elf, ihex, srec, uimage, binary (default: detected; binary is never detected)")
+	fl.StringVarP(&o.input, "input-target", "I", "", "input format: elf, ihex, srec, uimage, uf2, verilog, binary (default: detected; binary is never detected)")
 	fl.StringVar(&o.base, "base", "", "load address of a raw binary input, decimal or 0x-hex (required with -I binary)")
-	fl.StringVarP(&o.format, "output-target", "O", "binary", "output format: binary, srec, ihex, uimage")
+	fl.StringVarP(&o.format, "output-target", "O", "binary", "output format: binary, srec, ihex, uimage, uf2, verilog")
 	fl.BoolVar(&o.useVaddr, "use-vaddr", false, "place segments by virtual address instead of load address")
 	fl.StringVar(&o.pad, "pad", "", "gap fill byte for the image, decimal or 0x-hex (default 0x00)")
 	fl.StringVar(&o.maxSize, "max-size", "", "largest image in bytes from lowest to highest address (default 256 MiB)")
@@ -216,6 +225,10 @@ manifest) and fwimg verify --manifest FILE IMAGE checks an image against one.`,
 	fl.BoolVar(&o.noVerify, "no-verify", false, "do not read the output back and compare it with the image (the check is on by default)")
 	fl.StringVar(&o.timeFlag, "time", "", "uimage creation time in seconds, decimal or 0x-hex (default: SOURCE_DATE_EPOCH when set, else 0)")
 	fl.StringVar(&o.manifest, "manifest", "", "write a JSON manifest of the image (schema manifest-1) to this file, after the output is written and checked")
+	fl.StringVar(&o.uimageComp, "uimage-comp", "none", "uimage payload compression: none, gzip, lz4 (the payload is compressed here, mkimage does not)")
+	fl.StringVar(&o.uf2Family, "uf2-family", "", "UF2 family: a name of utils/uf2families.json (rp2040, samd21, ...) or a number; none by default")
+	fl.IntVar(&o.verilogWidth, "verilog-data-width", 1, "Verilog data width in bytes, 1 to 8 (objcopy's name); also how a Verilog input is read")
+	fl.StringVar(&o.verilogEndian, "verilog-endian", "", "Verilog byte order within a word: little or big (default: big for a big-endian ELF, else little); also for a Verilog input")
 	cmd.AddCommand(infoCmd(), verifyCmd())
 	return cmd
 }
@@ -305,10 +318,32 @@ func run(o *options, input string) (err error) {
 		return usageErr{"-o/--output is required"}
 	}
 	switch o.format {
-	case "binary", "srec", "ihex", "uimage":
+	case "binary", "srec", "ihex", "uimage", "uf2", "verilog":
 	default:
-		return usageErr{fmt.Sprintf("unknown --output-target %q (want binary, srec, ihex, uimage)", o.format)}
+		return usageErr{fmt.Sprintf("unknown --output-target %q (want binary, srec, ihex, uimage, uf2, verilog)", o.format)}
 	}
+	comp, err := fwimg.CompFromName(o.uimageComp)
+	if err != nil {
+		return usageErr{err.Error()}
+	}
+	if comp != fwimg.CompNone && o.format != "uimage" {
+		return usageErr{"--uimage-comp is only for -O uimage"}
+	}
+	if o.uf2Family != "" {
+		if o.format != "uf2" {
+			return usageErr{"--uf2-family is only for -O uf2"}
+		}
+		if o.family, err = fwimg.ParseUF2Family(o.uf2Family); err != nil {
+			return usageErr{err.Error()}
+		}
+	}
+	if o.verilogEndian != "" && o.verilogEndian != "little" && o.verilogEndian != "big" {
+		return usageErr{fmt.Sprintf("unknown --verilog-endian %q (want little or big)", o.verilogEndian)}
+	}
+	if o.verilogWidth < 1 || o.verilogWidth > 8 {
+		return usageErr{fmt.Sprintf("--verilog-data-width %d: want 1 to 8 bytes", o.verilogWidth)}
+	}
+	o.vopts = fwimg.VerilogOptions{DataWidth: o.verilogWidth, BigEndian: o.verilogEndian == "big"}
 	rawBase, err := checkInput(o.input, o.base)
 	if err != nil {
 		return err
@@ -422,9 +457,12 @@ func run(o *options, input string) (err error) {
 		return usageErr{"-j and -R select the sections of an ELF input; this input has none"}
 	}
 	sel := fwimg.SectionSelect{Only: o.only, Remove: o.remove}
-	src, err := load(in, data, fo, sel, rawBase, input)
+	src, err := load(in, data, fo, sel, rawBase, input, o.vopts)
 	if err != nil {
 		return err
+	}
+	if o.verilogEndian == "" && src.elf && len(data) > 5 && data[5] == 2 {
+		o.vopts.BigEndian = true // objcopy: the byte order of the ELF
 	}
 	im := src.img
 	// The layout of the ELF, for the messages that name what lies where: read
@@ -514,6 +552,10 @@ func run(o *options, input string) (err error) {
 		}
 	case "uimage":
 		out, uopts, err = uimage(o, im, src, arch, hasEntry, entry, fo)
+	case "uf2":
+		out, err = fwimg.EncodeUF2(im, fwimg.UF2Options{Family: o.family})
+	case "verilog":
+		out, err = fwimg.EncodeVerilog(im, o.vopts)
 	}
 	if err != nil {
 		return explain(err)
@@ -617,11 +659,15 @@ func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptio
 		err = fwimg.VerifyUImage(b, im, pad, uopts)
 	case "srec":
 		got, err = fwimg.DecodeSREC(b, dopts)
+	case "uf2":
+		err = fwimg.VerifyUF2(b, im, fwimg.UF2Options{Family: o.family})
+	case "verilog":
+		got, err = fwimg.DecodeVerilog(b, o.vopts, dopts)
 	default:
 		got, err = fwimg.DecodeIHEX(b, dopts)
 	}
 	switch {
-	case err != nil && o.format == "uimage":
+	case err != nil && (o.format == "uimage" || o.format == "uf2"):
 		return err
 	case err != nil:
 		return fmt.Errorf("%w: %v", fwimg.ErrVerify, err)
@@ -721,7 +767,7 @@ type source struct {
 }
 
 // load builds the Image of an input of the given format.
-func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.SectionSelect, rawBase uint64, input string) (*source, error) {
+func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.SectionSelect, rawBase uint64, input string, vo fwimg.VerilogOptions) (*source, error) {
 	var (
 		s   = &source{}
 		err error
@@ -744,7 +790,11 @@ func load(format string, data []byte, fo fwimg.FlattenOptions, sel fwimg.Section
 	case fwimg.FormatSREC:
 		s.img, err = fwimg.DecodeSREC(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
 	case fwimg.FormatUImage:
-		s.img, err = fwimg.UImageImage(data)
+		s.img, err = fwimg.UImageImageOpts(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
+	case fwimg.FormatUF2:
+		s.img, err = fwimg.DecodeUF2(data, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
+	case fwimg.FormatVerilog:
+		s.img, err = fwimg.DecodeVerilog(data, vo, fwimg.DecodeOptions{MaxSize: fo.MaxSize})
 	default: // fwimg.FormatBinary
 		s.img, err = fwimg.RawImage(data, rawBase)
 	}
@@ -786,6 +836,16 @@ func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, 
 	opts := fwimg.UImageOptions{
 		Load: uint32(base), Entry: uint32(entry), Name: cmp.Or(o.name, im.Name),
 		OS: osCode, Arch: arch, Type: typeCode, Time: o.stamp,
+	}
+	comp, err := fwimg.CompFromName(o.uimageComp)
+	if err != nil {
+		return nil, none, usageErr{err.Error()}
+	}
+	if comp != fwimg.CompNone {
+		if flat, err = fwimg.CompressPayload(flat, comp); err != nil {
+			return nil, none, err
+		}
+		opts.Comp = comp
 	}
 	out, err := fwimg.UImage(flat, opts)
 	return out, opts, err
