@@ -2,6 +2,31 @@
 
 Versions are `vMAJOR.MINOR.PATCH`; below v1 a breaking change bumps the MINOR.
 
+## v0.9.0
+
+FIT, the Flattened Image Tree (ROADMAP lot L7), on go-binfmt/fdt v0.1.0:
+
+* `fwimg -O fit`: the program of an ELF (or any input) as the kernel of a FIT,
+  with `--fit-hash` (crc32, sha1, sha256, sha384, sha512; default sha256),
+  `--fit-add TYPE[@LOAD]:FILE` for a device tree, ramdisk, firmware, script or
+  loadable, one configuration naming them all, and `--time`. `--fit-external`,
+  `--fit-align HEX` and `--fit-position` lay the data out after the device tree
+  as `mkimage -E`, `-B` and `-p` do; the tree is compared (properties sorted)
+  and the data store byte for byte against mkimage in a differential test.
+* `fwimg info FILE` lists a FIT as `mkimage -l` does (compared against it for
+  every image type); `--json` describes it with sizes and hashes, no data.
+* `fwimg verify FILE` checks every hash node of a FIT (crc32, sha1, sha256,
+  sha384, sha512, md5), without `--manifest`; `--require-hash` refuses an image
+  with no hash; signature nodes are refused unless `--allow-signatures`, since
+  signatures are not checked (signing is out of scope).
+* Library: `WriteFIT`, `AppendFIT`, `ParseFIT`, `(*FIT).Verify`, `(*FIT).Listing`.
+  The reader bounds every external extent by the file, refuses overlap, a
+  position inside the structure, `load + size` wrapping, a hash node without an
+  algorithm or value, and names that differ only by a unit address; one
+  regression test per FIT CVE of docs/spec-notes.md section 6. `FuzzFIT` runs in
+  CI with a committed corpus.
+* `Detect` returns `fit` for a devicetree magic.
+
 ## v0.8.1
 
 * The flat-binary write has a byte budget of its own (`writeFlat`): it hands the

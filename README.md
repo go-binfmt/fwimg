@@ -70,6 +70,36 @@ fwimg -O ihex --ihex-mode objcopy --crlf -o fw.hex fw.elf
   was dropped from Intel HEX before).
 * `--crlf` ends every line with CR LF, as objcopy and srec_cat do (LF by default).
 
+## FIT (v0.9.0)
+
+```
+fwimg -O fit --fit-add fdt:board.dtb --fit-add ramdisk@0x8000000:initrd.img -o kernel.fit kernel.elf
+fwimg -O fit --fit-external --fit-align 1000 -o kernel.fit kernel.elf   # like mkimage -E -B 1000
+fwimg info kernel.fit                                                   # as mkimage -l prints it
+fwimg verify --require-hash kernel.fit                                  # every hash node
+```
+
+A FIT is a devicetree blob ([fitspec](https://fitspec.osfw.foundation/)) built
+on [go-binfmt/fdt](https://github.com/go-binfmt/fdt). `-O fit` makes the input
+the kernel image (load address from the image, entry from the ELF, architecture
+from the ELF or `--uimage-arch`) and each `--fit-add` file another image, with
+one hash node per `--fit-hash` algorithm on all of them and a configuration
+`conf-1` that names them. `--fit-external` keeps the data after the structure
+(`data-offset`), `--fit-position` at an absolute address (`data-position`);
+`--fit-align` is mkimage `-B`, in hex and a power of two. Images are padded to 8
+bytes (`mkimage -E`), or to the alignment. Signing is not supported: a FIT with
+signature nodes is refused by `verify` unless `--allow-signatures`, which says
+that the signatures were not checked.
+
+`fwimg verify` reads a FIT's own hashes, so it takes no manifest; `--manifest`
+with `-O fit` is refused. The reader refuses external data outside the file, in
+the structure or over another image, a `load + size` that wraps, a hash node
+without an algorithm or a value of the right length, a configuration naming an
+image that is not there, and names that differ only by a unit address (the
+CVE-2021-27138 class); `docs/spec-notes.md` section 6 lists the CVEs and each has
+a regression test. Library: `WriteFIT`, `AppendFIT`, `ParseFIT`, `(*FIT).Verify`,
+`(*FIT).Listing`.
+
 ## UF2, Verilog hex and compressed uImage (v0.7.0)
 
 ```

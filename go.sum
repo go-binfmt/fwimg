@@ -1,6 +1,8 @@
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/go-binfmt/elfpatch v0.5.0 h1:18fY1UKawOqQzmXUGSt9+cXBajZUE8f+VMgeqeKa/h4=
 github.com/go-binfmt/elfpatch v0.5.0/go.mod h1:Po5QPe+Ti+XnEt5NEctEJZbbUxgMP4AhWAxrUVnjocI=
+github.com/go-binfmt/fdt v0.1.0 h1:97ylWJ4PTJKb8sam1/USl+RorMMY7gG+/CB8ThCK32Y=
+github.com/go-binfmt/fdt v0.1.0/go.mod h1:ajBnc4VRX+ly2NmKW5MrQF9BlvzzPtHCu+sEkchqATg=
 github.com/go-compressions/appleoracle v0.3.0 h1:hNdRkdAFDOtbypzcuray4wtER3pWghRFkl/Ygck3r6s=
 github.com/go-compressions/appleoracle v0.3.0/go.mod h1:oKtBkLzNNzAMRv1EpgO0v22V662XXSf0FkhE46j3OtY=
 github.com/go-compressions/lz4 v0.7.0 h1:N0KE8YTwLxe9pmIX9HyuE0CHkI5Xl7b4t/kjQf9KheI=

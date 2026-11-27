@@ -127,6 +127,8 @@ type options struct {
 	verilogWidth  int
 	verilogEndian string
 
+	fit fitFlags // L7: -O fit
+
 	family uint32               // --uf2-family, parsed
 	vopts  fwimg.VerilogOptions // the Verilog options, once the input is known
 }
@@ -197,7 +199,12 @@ manifest) and fwimg verify --manifest FILE IMAGE checks an image against one.`,
 	fl.StringVarP(&o.output, "output", "o", "", "output file (required)")
 	fl.StringVarP(&o.input, "input-target", "I", "", "input format: elf, ihex, srec, uimage, uf2, verilog, binary (default: detected; binary is never detected)")
 	fl.StringVar(&o.base, "base", "", "load address of a raw binary input, decimal or 0x-hex (required with -I binary)")
-	fl.StringVarP(&o.format, "output-target", "O", "binary", "output format: binary, srec, ihex, uimage, uf2, verilog")
+	fl.StringVarP(&o.format, "output-target", "O", "binary", "output format: binary, srec, ihex, uimage, fit, uf2, verilog")
+	fl.StringVar(&o.fit.hash, "fit-hash", "sha256", "fit: hash algorithms of every image, comma-separated (crc32, sha1, sha256, sha384, sha512)")
+	fl.BoolVar(&o.fit.external, "fit-external", false, "fit: keep the images after the device tree, like mkimage -E, instead of inside it")
+	fl.StringVar(&o.fit.align, "fit-align", "", "fit: alignment of external data in HEX, a power of two, like mkimage -B (needs --fit-external)")
+	fl.StringVar(&o.fit.position, "fit-position", "", "fit: absolute position of external data, like mkimage -p (needs --fit-external)")
+	fl.StringArrayVar(&o.fit.add, "fit-add", nil, "fit: add an image, TYPE[@LOAD]:FILE (type fdt, ramdisk, firmware, script, loadable, ...); repeatable")
 	fl.BoolVar(&o.useVaddr, "use-vaddr", false, "place segments by virtual address instead of load address")
 	fl.StringVar(&o.pad, "pad", "", "gap fill byte for the image, decimal or 0x-hex (default 0x00)")
 	fl.StringVar(&o.maxSize, "max-size", "", "largest image in bytes from lowest to highest address (default 256 MiB)")
@@ -318,9 +325,15 @@ func run(o *options, input string) (err error) {
 		return usageErr{"-o/--output is required"}
 	}
 	switch o.format {
-	case "binary", "srec", "ihex", "uimage", "uf2", "verilog":
+	case "binary", "srec", "ihex", "uimage", "fit", "uf2", "verilog":
 	default:
-		return usageErr{fmt.Sprintf("unknown --output-target %q (want binary, srec, ihex, uimage, uf2, verilog)", o.format)}
+		return usageErr{fmt.Sprintf("unknown --output-target %q (want binary, srec, ihex, uimage, fit, uf2, verilog)", o.format)}
+	}
+	if o.format != "fit" && o.fit.set() {
+		return usageErr{"--fit-* flags are only for -O fit"}
+	}
+	if o.format == "fit" && o.manifest != "" {
+		return usageErr{errNoFITManifest.Error()}
 	}
 	comp, err := fwimg.CompFromName(o.uimageComp)
 	if err != nil {
@@ -432,10 +445,10 @@ func run(o *options, input string) (err error) {
 	if err != nil {
 		return usageErr{err.Error()}
 	}
-	if o.timeFlag != "" && o.format != "uimage" {
-		return usageErr{"--time is only for -O uimage"}
+	if o.timeFlag != "" && o.format != "uimage" && o.format != "fit" {
+		return usageErr{"--time is only for -O uimage and -O fit"}
 	}
-	if o.format == "uimage" {
+	if o.format == "uimage" || o.format == "fit" {
 		if o.stamp, err = uimageTime(o.timeFlag); err != nil {
 			return err
 		}
@@ -452,6 +465,9 @@ func run(o *options, input string) (err error) {
 		if in = fwimg.Detect(data); in == "" {
 			return fmt.Errorf("%s: %w; a raw binary is read only with -I binary --base ADDR", input, fwimg.ErrUnknownFormat)
 		}
+	}
+	if in == fwimg.FormatFIT {
+		return usageErr{"a FIT is an input of fwimg info and fwimg verify, not of a conversion"}
 	}
 	if (len(o.only) > 0 || len(o.remove) > 0) && in != fwimg.FormatELF {
 		return usageErr{"-j and -R select the sections of an ELF input; this input has none"}
@@ -552,6 +568,8 @@ func run(o *options, input string) (err error) {
 		}
 	case "uimage":
 		out, uopts, err = uimage(o, im, src, arch, hasEntry, entry, fo)
+	case "fit":
+		out, _, err = fit(o, im, src, arch, hasEntry, entry, fo)
 	case "uf2":
 		out, err = fwimg.EncodeUF2(im, fwimg.UF2Options{Family: o.family})
 	case "verilog":
@@ -560,7 +578,7 @@ func run(o *options, input string) (err error) {
 	if err != nil {
 		return explain(err)
 	}
-	if (o.format == "binary" || o.format == "uimage") && o.gapWarn != 0 {
+	if (o.format == "binary" || o.format == "uimage" || o.format == "fit") && o.gapWarn != 0 {
 		if w := im.GapWarning(o.gapWarn); w != "" {
 			fmt.Fprintf(o.errw, "fwimg: warning: %s\n  %s\n", w, im.ExplainGap(layout()))
 		}
@@ -659,6 +677,8 @@ func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptio
 		err = fwimg.VerifyUImage(b, im, pad, uopts)
 	case "srec":
 		got, err = fwimg.DecodeSREC(b, dopts)
+	case "fit":
+		err = fitCheck(b)
 	case "uf2":
 		err = fwimg.VerifyUF2(b, im, fwimg.UF2Options{Family: o.family})
 	case "verilog":
@@ -667,7 +687,7 @@ func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptio
 		got, err = fwimg.DecodeIHEX(b, dopts)
 	}
 	switch {
-	case err != nil && (o.format == "uimage" || o.format == "uf2"):
+	case err != nil && (o.format == "uimage" || o.format == "uf2" || o.format == "fit"):
 		return err
 	case err != nil:
 		return fmt.Errorf("%w: %v", fwimg.ErrVerify, err)

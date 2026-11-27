@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/go-binfmt/fdt v0.1.0 // indirect
 	github.com/go-simd/matchlen v0.5.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
