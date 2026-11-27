@@ -603,4 +603,8 @@ func TestVerilog_BoundAndDigitMessage(t *testing.T) {
 	if !errors.Is(err, ErrSyntax) || !strings.Contains(err.Error(), "not a hex digit") {
 		t.Errorf("non-hex digit: %v", err)
 	}
+	// in an address the digits are read without a second check
+	if im, err := DecodeVerilog([]byte("@1g\n00\n"), VerilogOptions{}, DecodeOptions{}); !errors.Is(err, ErrSyntax) || im != nil {
+		t.Errorf("non-hex address digit: %v %v", im, err)
+	}
 }
