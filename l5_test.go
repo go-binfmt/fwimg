@@ -183,7 +183,11 @@ func TestUF2Families(t *testing.T) {
 // checkUF2Families compares UF2Families with utils/uf2families.json.
 func checkUF2Families(t *testing.T, src []byte) {
 	t.Helper()
-	var rows []struct{ ID, ShortName, Description string }
+	var rows []struct {
+		ID          string `json:"id"`
+		ShortName   string `json:"short_name"`
+		Description string `json:"description"`
+	}
 	if err := json.Unmarshal(src, &rows); err != nil {
 		t.Fatal(err)
 	}
@@ -430,6 +434,9 @@ func FuzzUF2(f *testing.F) {
 		a, err := EncodeUF2(im, UF2Options{Family: im.Family})
 		if err != nil {
 			return // an address the encoder will not align: refused, not wrong
+		}
+		if len(a) == 0 {
+			return // blocks that carry no data: an empty image, which has no UF2 file
 		}
 		back, err := DecodeUF2(a, DecodeOptions{MaxSize: 2 * bound})
 		if err != nil {

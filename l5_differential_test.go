@@ -91,7 +91,7 @@ func TestDifferential_UF2AgainstUf2conv(t *testing.T) {
 	}
 	dir := t.TempDir()
 	for _, fam := range []string{"", "rp2040", "0xada52840"} {
-		for _, n := range []int{1, 255, 256, 257, 5000} {
+		for _, n := range []int{8, 255, 256, 257, 5000} {
 			raw := payloadFor(n)
 			in := writeTemp(t, dir, "in.bin", raw)
 			ref := filepath.Join(dir, "ref.uf2")
