@@ -396,17 +396,17 @@ func fitErr(format string, a ...any) error {
 // addrProp reads load, entry or data-position: one or two cells, by length, as
 // U-Boot does.
 func addrProp(n *fdt.Node, name string) (uint64, bool, error) {
-	p := n.Prop(name)
-	if p == nil {
+	v := propBytes(n, name)
+	if n.Prop(name) == nil {
 		return 0, false, nil
 	}
-	switch len(p.Value) {
+	switch len(v) {
 	case 4:
-		return uint64(binary.BigEndian.Uint32(p.Value)), true, nil
+		return uint64(binary.BigEndian.Uint32(v)), true, nil
 	case 8:
-		return binary.BigEndian.Uint64(p.Value), true, nil
+		return binary.BigEndian.Uint64(v), true, nil
 	}
-	return 0, false, fitErr("%s is %d bytes, want 4 or 8", name, len(p.Value))
+	return 0, false, fitErr("%s is %d bytes, want 4 or 8", name, len(v))
 }
 
 func optString(n *fdt.Node, name string) string {
