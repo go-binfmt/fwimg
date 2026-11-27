@@ -18,11 +18,49 @@ func TestMedian(t *testing.T) {
 
 func TestRunRefusals(t *testing.T) {
 	var w bytes.Buffer
-	for _, a := range [][]string{{"-rounds", "0", "-native", "x"}, {}, {"-nosuchflag"}} {
-		if err := run(a, &w); err == nil {
-			t.Errorf("run(%v) succeeded", a)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"-rounds", "0", "-native", "x"}, "-rounds must be at least 1"},
+		{[]string{}, "-native is required"},
+		{[]string{"-nosuchflag"}, "flag provided but not defined"},
+	} {
+		err := run(c.args, &w)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("run(%v) = %v, want an error with %q", c.args, err, c.want)
 		}
 	}
+}
+
+// Each environment failure is an error, not a table: no go to ask GOROOT of,
+// no directory to work in, a fixture that cannot be written.
+func TestRunEnvironmentFailures(t *testing.T) {
+	tr, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true(1)")
+	}
+	var w bytes.Buffer
+	t.Run("no go", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if err := run([]string{"-native", tr}, &w); err == nil || !strings.Contains(err.Error(), "go") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("no work directory", func(t *testing.T) {
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "absent"))
+		if err := run([]string{"-native", tr, "-goroot", "/"}, &w); err == nil || !strings.Contains(err.Error(), "absent") {
+			t.Errorf("err = %v", err)
+		}
+	})
+	t.Run("fixture fails", func(t *testing.T) {
+		old := makeFixture
+		defer func() { makeFixture = old }()
+		makeFixture = func(string, int) error { return os.ErrPermission }
+		if err := run([]string{"-native", tr, "-goroot", "/"}, &w); err != os.ErrPermission {
+			t.Errorf("err = %v", err)
+		}
+	})
 }
 
 func TestFixtureIsAnELFofTheSize(t *testing.T) {

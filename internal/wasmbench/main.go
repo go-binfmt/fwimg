@@ -59,6 +59,9 @@ var sizes = []struct {
 	n    int
 }{{"1 KiB", 1 << 10}, {"4 MiB", 4 << 20}, {"32 MiB", 32 << 20}}
 
+// makeFixture is a variable so a test can make the fixture fail.
+var makeFixture = fixture
+
 func fixture(path string, n int) error {
 	data := make([]byte, n/2)
 	x := uint32(12345)
@@ -103,6 +106,7 @@ func once(r runner, args []string) (time.Duration, error) {
 
 func run(args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("wasmbench", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	native := fs.String("native", "", "the native fwimg")
 	js := fs.String("js", "", "fwimg built with GOOS=js GOARCH=wasm")
 	wasi := fs.String("wasi", "", "fwimg built with GOOS=wasip1 GOARCH=wasm")
@@ -160,7 +164,7 @@ func run(args []string, w io.Writer) error {
 			continue
 		}
 		in := filepath.Join(dir, "in.elf")
-		if err := fixture(in, sz.n); err != nil {
+		if err := makeFixture(in, sz.n); err != nil {
 			return err
 		}
 		for _, o := range ops {
