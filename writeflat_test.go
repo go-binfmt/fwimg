@@ -3,6 +3,7 @@ package fwimg
 import (
 	"bytes"
 	"errors"
+	"math"
 	"testing"
 )
 
@@ -43,6 +44,43 @@ func TestWriteFlatEqualsFlat(t *testing.T) {
 		if werr != nil || gerr != nil || wbase != gbase || !bytes.Equal(want, got.Bytes()) {
 			t.Errorf("%s: WriteFlat = %d bytes, base %#x, %v; Flat = %d bytes, base %#x, %v", c.name, got.Len(), gbase, gerr, len(want), wbase, werr)
 		}
+	}
+}
+
+// counter takes every byte and keeps none: a test writes to it what it would
+// not dare write to a disk.
+type counter struct{ n uint64 }
+
+func (c *counter) Write(p []byte) (int, error) { c.n += uint64(len(p)); return len(p), nil }
+
+// The write has a budget of its own, independent of CheckFlat: with CheckFlat
+// out of the way (writeFlat is called directly), two segments 128 TiB apart
+// reach the sink for at most limit bytes and then ErrTooLarge, never the whole
+// distance. A span exactly at the limit still writes in full. Nothing touches
+// a disk: the sink only counts.
+func TestWriteFlatBudgetStopsWithoutCheckFlat(t *testing.T) {
+	far := &Image{Segments: []Segment{{Addr: 0, Data: []byte{1}}, {Addr: 1 << 47, Data: []byte{2}}}}
+	for _, limit := range []uint64{0, 1, 2, flatChunk - 1, flatChunk, 3*flatChunk + 5} {
+		var c counter
+		err := far.writeFlat(&c, 0, 0, limit)
+		if !errors.Is(err, ErrTooLarge) || c.n > limit {
+			t.Errorf("limit %d: err = %v, %d bytes reached the sink", limit, err, c.n)
+		}
+	}
+	near := &Image{Segments: []Segment{{Addr: 0, Data: []byte{1}}, {Addr: 99, Data: []byte{2}}}} // span 100
+	var c counter
+	if err := near.writeFlat(&c, 0, 0, 100); err != nil || c.n != 100 {
+		t.Errorf("span at the limit: err = %v, %d bytes", err, c.n)
+	}
+	if err := near.writeFlat(&counter{}, 0, 0, 99); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("span one over the limit: err = %v", err)
+	}
+	if err := (&Image{Segments: []Segment{{Addr: 0, Data: []byte{1, 2, 3}}}}).writeFlat(&counter{}, 0, 0, 2); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("one segment over the limit: err = %v", err)
+	}
+	// flatLimit: zero is the default, and nothing exceeds an int.
+	if flatLimit(0) != DefaultMaxSize || flatLimit(7) != 7 || flatLimit(1<<63) != uint64(math.MaxInt) {
+		t.Errorf("flatLimit: %d %d %d", flatLimit(0), flatLimit(7), flatLimit(1<<63))
 	}
 }
 

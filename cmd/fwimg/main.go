@@ -756,7 +756,13 @@ func writeOutput(path string, fill func(io.Writer) error) (err error) {
 			err = e
 		}
 	}()
-	return fill(f)
+	if err := fill(f); err != nil {
+		// A refusal made while writing (the output's own budget, a full disk)
+		// leaves no partial file behind, in a directory nobody looks at.
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
 }
 
 // source is a loaded input: its image, and what only the ELF knows.

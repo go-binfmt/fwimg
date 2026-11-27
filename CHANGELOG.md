@@ -2,6 +2,19 @@
 
 Versions are `vMAJOR.MINOR.PATCH`; below v1 a breaking change bumps the MINOR.
 
+## v0.8.1
+
+* The flat-binary write has a byte budget of its own (`writeFlat`): it hands the
+  writer at most the `--max-size` limit (default 256 MiB) and then refuses with
+  `ErrTooLarge`, independently of the `CheckFlat` refusal made before it. With
+  only `CheckFlat` guarding it, one wrong comparison turned the "distant
+  segments" refusal case into a file as long as the distance between two
+  segments (a 227 GiB file measured on a developer's disk, which then filled).
+* `fwimg` removes the output file when writing it fails, instead of leaving the
+  partial file.
+* Tests: the budget is asserted without `CheckFlat` in front of it, against a
+  sink that only counts bytes; the partial-file removal is asserted.
+
 ## v0.8.0
 
 WebAssembly (ROADMAP lot L6):
