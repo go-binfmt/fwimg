@@ -20,6 +20,15 @@ func TestTextSeedsMeanWhatTheirNamesSay(t *testing.T) {
 	}{
 		{"FuzzIHEX", ihexSeeds(), func(b []byte) error { _, err := fwimg.DecodeIHEX(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
 		{"FuzzSREC", srecSeeds(), func(b []byte) error { _, err := fwimg.DecodeSREC(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
+		{"FuzzUF2", uf2Seeds(), func(b []byte) error { _, err := fwimg.DecodeUF2(b, fwimg.DecodeOptions{MaxSize: 1 << 10}); return err }},
+		{"FuzzVerilog", verilogSeeds(), func(b []byte) error {
+			_, err := fwimg.DecodeVerilog(b[1:], verilogConfig(b[0]), fwimg.DecodeOptions{MaxSize: 1 << 10})
+			return err
+		}},
+		{"FuzzUImageComp", uimageCompSeeds(), func(b []byte) error {
+			_, err := fwimg.UImageImageOpts(b, fwimg.DecodeOptions{MaxSize: 1 << 10})
+			return err
+		}},
 		{"FuzzUImage", uimageSeeds(), func(b []byte) error {
 			h, p, err := fwimg.ParseUImage(b)
 			if err == nil {
@@ -42,7 +51,7 @@ func TestTextSeedsReproduceTheCommittedCorpus(t *testing.T) {
 	if err := all(dir); err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []string{"FuzzFlatten", "FuzzIHEX", "FuzzSREC", "FuzzUImage"} {
+	for _, d := range []string{"FuzzFlatten", "FuzzIHEX", "FuzzSREC", "FuzzUImage", "FuzzUF2", "FuzzVerilog", "FuzzUImageComp"} {
 		made, err := os.ReadDir(filepath.Join(dir, d))
 		if err != nil {
 			t.Fatal(err)
@@ -89,6 +98,25 @@ func TestTextRefusals(t *testing.T) {
 	}
 	if err := runText(dir); err == nil || !strings.Contains(err.Error(), "valid-empty") {
 		t.Errorf("err = %v, want it to name the seed", err)
+	}
+	// Each corpus failing alone, the others writable, still fails: the text one
+	// and the L5 one.
+	text := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(text, "FuzzIHEX", "valid-empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := all(text); err == nil || !strings.Contains(err.Error(), "valid-empty") {
+		t.Errorf("all with an unwritable text corpus: err = %v", err)
+	}
+	l5 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(l5, "FuzzUF2"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runL5(l5); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+		t.Errorf("runL5 with an unwritable corpus: err = %v", err)
+	}
+	if err := all(l5); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+		t.Errorf("all with an unwritable L5 corpus: err = %v", err)
 	}
 	// The seeds that panic on a library error are only reached with a broken
 	// encoder: the helper itself is checked here.

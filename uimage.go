@@ -195,19 +195,39 @@ func (h *UImageHeader) Listing(components [][]byte) string {
 }
 
 // UImageImage is the Image a uImage loads: its payload at the load address,
-// with the entry point, the name and the header. A compressed payload is
-// refused (ErrFormat): the loader decompresses it, and this reader does not.
+// with the entry point, the name and the header. A gzip or LZ4 payload is
+// decompressed, to at most DefaultMaxSize bytes; UImageImageOpts sets the
+// bound.
 func UImageImage(data []byte) (*Image, error) {
+	return UImageImageOpts(data, DecodeOptions{})
+}
+
+// UImageImageOpts is UImageImage with the bound on the decompressed payload in
+// opts.MaxSize. A payload that expands past it is refused (ErrTooLarge), and
+// one compressed with a container this package cannot read (bzip2, lzma, lzo,
+// zstd) is ErrFormat. The Image's UImage header is the stored one: Size and
+// DataCRC describe the compressed bytes.
+func UImageImageOpts(data []byte, opts DecodeOptions) (*Image, error) {
 	im, err := UImageStored(data)
 	if err != nil {
 		return nil, err
 	}
 	h := im.UImage
-	if h.Comp != CompNone {
-		return nil, fmt.Errorf("uimage: %w: the payload is %s compressed", ErrFormat, nameOr(uimageComp, h.Comp, "unknown"))
-	}
 	if h.Type == TypeMulti {
 		return nil, fmt.Errorf("uimage: %w: a multi-file image has no single load image", ErrFormat)
+	}
+	if h.Comp != CompNone {
+		var stored []byte // an empty payload is no segment
+		if len(im.Segments) > 0 {
+			stored = im.Segments[0].Data
+		}
+		raw, err := DecompressPayload(stored, h.Comp, opts.MaxSize)
+		if err != nil {
+			return nil, err
+		}
+		// A 32-bit load address cannot overflow 2^64, the only refusal of RawImage.
+		im, _ = RawImage(raw, uint64(h.Load))
+		im.Entry, im.HasEntry, im.Name, im.UImage = uint64(h.Entry), true, h.Name, h
 	}
 	return im, nil
 }

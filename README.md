@@ -8,10 +8,11 @@
 
 Turn an ELF executable into the image a fixed-address target loads: a **flat
 binary** (`objcopy -O binary`), a **Motorola S-record** (`objcopy -O srec`), an
-**Intel HEX** file (`objcopy -O ihex`) or a legacy **U-Boot uImage**
-(`mkimage`). Pure Go, standard library only (plus cobra for the CLI), no
-binutils, no U-Boot tools, static binaries for Linux, macOS, the BSDs and
-Windows.
+**Intel HEX** file (`objcopy -O ihex`), a legacy **U-Boot uImage**
+(`mkimage`, optionally gzip or lz4 compressed), a **UF2** file (`uf2conv.py`)
+or a **Verilog hex** memory file (`objcopy -O verilog`). Pure Go (plus cobra
+for the CLI and the lz4 library), no binutils, no U-Boot tools, static
+binaries for Linux, macOS, the BSDs and Windows.
 
 ```
 go install github.com/go-binfmt/fwimg/cmd/fwimg@latest
@@ -23,7 +24,8 @@ fwimg -O uimage --load 0x80000 --entry 0x80000 --name linux -o uImage kernel.elf
 ```
 
 The input can be any of those too, so any format converts to any other. The
-format is recognised by its magic or syntax (ELF, Intel HEX, S-record, uImage)
+format is recognised by its magic or syntax (ELF, Intel HEX, S-record, uImage,
+UF2, Verilog hex)
 and `-I` forces it; a raw file is never guessed and needs `-I binary --base`:
 
 ```
@@ -67,6 +69,42 @@ fwimg -O ihex --ihex-mode objcopy --crlf -o fw.hex fw.elf
   address. A start address is written in both (new in v0.4.0: an ELF's entry
   was dropped from Intel HEX before).
 * `--crlf` ends every line with CR LF, as objcopy and srec_cat do (LF by default).
+
+## UF2, Verilog hex and compressed uImage (v0.7.0)
+
+```
+fwimg -O uimage --uimage-comp gzip --load 0x80000 --entry 0x80000 -o uImage kernel.elf
+fwimg -O uimage --uimage-comp lz4  --load 0x80000 --entry 0x80000 -o uImage kernel.elf
+fwimg -O uf2 --uf2-family rp2040 -o fw.uf2 fw.elf        # a family name or a number
+fwimg -O verilog --verilog-data-width 4 -o mem.hex fw.elf
+fwimg -I uf2 -O binary -o fw.bin fw.uf2
+fwimg -I verilog --verilog-data-width 4 -O ihex -o fw.hex mem.hex
+```
+
+* **`--uimage-comp none|gzip|lz4`** compresses the payload and sets `ih_comp`
+  (gzip 1, lz4 5); `ih_size` and the data CRC cover the compressed bytes, as
+  mkimage does. The gzip stream is reproducible (no time, no name, a fixed
+  level). Reading a compressed uImage decompresses it, bounded by `--max-size`
+  (a decompression bomb is refused, not expanded). `info`, `verify` and
+  `--json` describe the decompressed program; the listing keeps the header as
+  stored.
+* **`-O uf2`** writes 256-byte-payload blocks (`uf2conv.py`'s layout). A block
+  is cut where the next segment starts and each block is padded with zeros, so
+  the last block of an image that is not a multiple of 256 carries the padding.
+  `--uf2-family NAME|NUMBER` sets the family ID (the table is the one of
+  microsoft/uf2 at a pinned commit; `0` is refused). The reader is strict:
+  magics, block numbers, the block count and the flags are checked, and a file
+  container or a not-main-flash block is refused.
+* **`-O verilog`** is objcopy's `$readmemh` layout: `@ADDRESS` lines in
+  uppercase hex and CRLF line ends. `--verilog-data-width 1..8` is the word
+  width in bytes; `--verilog-endian little|big` orders the bytes within a word
+  (default: the ELF's, else little). Segment addresses must be multiples of the
+  width. The reader accepts `//` and `/* */` comments, `@` addresses and `_`
+  digit separators, and refuses a token wider than a word.
+* `FuzzUF2`, `FuzzVerilog` and `FuzzUImageComp` fuzz the three readers (corpora
+  committed); the CI differential lanes compare against mkimage, `uf2conv.py`
+  and objcopy and fail when a reference tool is missing. The manifest schema
+  lists `uf2` and `verilog` as formats.
 
 ## Safety checks (v0.5.0)
 
@@ -129,8 +167,8 @@ fwimg verify --manifest fw.json -I binary --base 0x8000000 fw.bin
   `https://go-binfmt.github.io/fwimg/manifest-1.schema.json` and embedded in
   the library as `fwimg.ManifestSchema`. A change that is not backward
   compatible makes `manifest-2`; `schema_version` says which one a file is.
-* **`info`** reads ELF, Intel HEX, S-record, uImage or (`-I binary --base`) a
-  raw file. A uImage is listed exactly as `mkimage -l` does; the others print
+* **`info`** reads ELF, Intel HEX, S-record, uImage (compressed too), UF2,
+  Verilog hex or (`-I binary --base`) a raw file. A uImage is listed exactly as `mkimage -l` does; the others print
   the manifest's facts as text, or as JSON with `--json`.
 * **`verify`** recomputes from the image's bytes, in whatever format it is in,
   the base, size, start address and the hashes of the whole image and of every
@@ -147,7 +185,9 @@ The library is `github.com/go-binfmt/fwimg`: `NewManifest`, `ReadManifest`,
 `UImage`, the L2 additions `ELFImage`, `ELFSections` (with `SectionSelect`),
 `EncodeSRECOpts` and `EncodeIHEXOpts`, with `Image.GapFill`, `PadTo` and
 `Offset`; the readers `DecodeIHEX`, `DecodeSREC`, `ParseUImage`, `RawImage`
-and `Detect` (an `Image` of sparse segments), plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
+and `Detect`; since v0.7.0 `EncodeUF2`, `DecodeUF2`, `VerifyUF2`,
+`EncodeVerilog`, `DecodeVerilog`, `CompressPayload`, `DecompressPayload`,
+`UF2Families` and `ParseUF2Family` (an `Image` of sparse segments), plus `ArchFromELF` (takes the ELF `e_machine` number) / `ArchFromName` for the uImage architecture code.
 
 ```go
 flat, base, err := fwimg.Flatten(f, size, fwimg.FlattenOptions{Pad: 0xff})
@@ -177,6 +217,9 @@ a sentinel (`errors.Is`) and with nothing allocated for it:
 | an Intel HEX or S-record file with a bad checksum, no end record, records after it, overlapping records or data past 4 GiB | `ErrChecksum`, `ErrSyntax`, `ErrOverlap`, `ErrAddrOverflow`, with the line number |
 | text with records scattered far apart (each piece costs the decoder) | `ErrTooLarge`: data bytes plus 16 bytes per separate piece count against `DecodeOptions.MaxSize` |
 | a uImage with a bad header or data CRC, an `ih_size` past the file, or a multi-file table that does not end inside the payload | `ErrFormat` / `ErrRange` |
+| a gzip or lz4 uImage payload that expands past the limit (a bomb), or is not a valid stream | `ErrTooLarge` (nothing past the limit is allocated) / `ErrSyntax` |
+| a UF2 file with bad magics, a payload size past 476, a block number or count that disagrees, an unknown flag, or an address that wraps | `ErrFormat` / `ErrSyntax` / `ErrAddrOverflow` |
+| a Verilog hex file with a bad digit, an unterminated comment, a token wider than the word, overlapping data or an address past 2^64 | `ErrSyntax` / `ErrOverlap` / `ErrAddrOverflow` |
 
 Every one of these has a test that asserts the refusal; the memory bomb runs under
 a memory limit and asserts that nothing is allocated. Sizes are `int` on 32-bit

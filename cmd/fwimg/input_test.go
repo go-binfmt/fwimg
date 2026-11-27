@@ -242,7 +242,7 @@ func TestInputs_Refusals(t *testing.T) {
 		{"-I srec on a hex file", []string{"-I", "srec", "-o", o, ihexFile(t, 0, "a")}, "srec line 1", 1},
 		{"-I uimage on a raw file", []string{"-I", "uimage", "-o", o, raw}, "uimage", 1},
 		{"bad checksum", []string{"-o", o, badSum}, "checksum", 1},
-		{"compressed uimage", []string{"-o", o, gz}, "compressed", 1},
+		{"uimage whose gzip payload is not gzip", []string{"-o", o, gz}, "malformed", 1},
 		{"raw to uimage needs an arch", []string{"-I", "binary", "--base", "0", "--entry", "0", "-O", "uimage", "-o", o, raw}, "--uimage-arch is required", 2},
 		{"hex to uimage needs an entry", []string{"-O", "uimage", "--uimage-arch", "arm", "-o", o, noEntry}, "--entry is required", 2},
 		{"raw base above 32 bits to srec", []string{"-I", "binary", "--base", "0x100000000", "-O", "srec", "-o", o, raw}, "image base", 1},

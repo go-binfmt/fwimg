@@ -27,7 +27,10 @@ func all(root string) error {
 	if err := run(filepath.Join(root, "FuzzFlatten")); err != nil {
 		return err
 	}
-	return runText(root)
+	if err := runText(root); err != nil {
+		return err
+	}
+	return runL5(root)
 }
 
 func run(dir string) error {

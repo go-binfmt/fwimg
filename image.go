@@ -3,6 +3,7 @@ package fwimg
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math"
@@ -34,6 +35,9 @@ type Image struct {
 	// UImage is the header of the uImage the image was read from, nil for
 	// every other source.
 	UImage *UImageHeader
+	// Family is the UF2 family ID of the file the image was read from, 0 when
+	// it has none (or is not a UF2 file).
+	Family uint32
 }
 
 // Len is the number of data bytes in the image, gaps excluded.
@@ -180,18 +184,27 @@ const (
 	FormatIHEX   = "ihex"
 	FormatSREC   = "srec"
 	FormatUImage = "uimage"
+	FormatUF2    = "uf2"
+	// FormatVerilog is a Verilog hex memory file; its data width and byte
+	// order are not in the file, so reading one takes VerilogOptions.
+	FormatVerilog = "verilog"
 	// FormatBinary is never detected: a raw file has no magic, and guessing
 	// would turn any file into a firmware image.
 	FormatBinary = "binary"
 )
 
 // Detect names the format of data from its magic bytes or syntax, or returns
-// "" when it is none of ELF (\x7fELF), uImage (0x27051956 first), Intel HEX
-// (first non-blank byte ':') or S-record (first non-blank byte 'S' and a
-// digit). It never returns FormatBinary.
+// "" when it is none of ELF (\x7fELF), UF2 (the two magic numbers first),
+// uImage (0x27051956 first), Intel HEX (first non-blank byte ':'), S-record
+// (first non-blank byte 'S' and a digit) or Verilog hex (first non-blank byte
+// '@'). A Verilog file that starts with data, not an address, is not detected.
+// It never returns FormatBinary.
 func Detect(data []byte) string {
 	if len(data) >= 4 && string(data[:4]) == "\x7fELF" {
 		return FormatELF
+	}
+	if len(data) >= 8 && binary.LittleEndian.Uint32(data) == uf2Magic0 && binary.LittleEndian.Uint32(data[4:]) == uf2Magic1 {
+		return FormatUF2
 	}
 	if len(data) >= 4 && data[0] == 0x27 && data[1] == 0x05 && data[2] == 0x19 && data[3] == 0x56 {
 		return FormatUImage
@@ -205,6 +218,9 @@ func Detect(data []byte) string {
 	}
 	if i+1 < len(data) && data[i] == 'S' && data[i+1] >= '0' && data[i+1] <= '9' {
 		return FormatSREC
+	}
+	if i < len(data) && data[i] == '@' {
+		return FormatVerilog
 	}
 	return ""
 }

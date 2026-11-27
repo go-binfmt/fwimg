@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("\x00// header\n/* block\ncomment */ @10 A_A BB\n// tail\n")

@@ -40,7 +40,41 @@ type op struct {
 	ours func(elf, out string) []string
 }
 
-type tools struct{ objcopy, mkimage, fwimg string }
+// fromFlat: both programs read the flat payload (made once by fwimg), not the
+// ELF, because the reference has no ELF reader (uf2conv.py).
+func fromFlat(o op) bool { return strings.HasPrefix(o.name, "-O uf2") }
+
+type tools struct{ objcopy, mkimage, fwimg, uf2conv string }
+
+// l5Ops are the formats of v0.7.0 and their reference tools. The UF2 row
+// needs uf2conv.py (-uf2conv), so it is added only when given.
+func l5Ops(t tools) []op {
+	rows := []op{
+		{name: "-O verilog",
+			ref: func(t tools, elf, _, out string) []string {
+				return []string{t.objcopy, "-O", "verilog", elf, out}
+			},
+			ours: func(elf, out string) []string { return []string{"-O", "verilog", "-o", out, elf} }},
+		{name: "-O uimage --uimage-comp gzip (mkimage -C gzip: flat file in)",
+			ref: func(t tools, _, flat, out string) []string {
+				return []string{t.mkimage, "-A", "arm", "-O", "linux", "-T", "kernel", "-C", "gzip",
+					"-a", "0x80000", "-e", "0x80000", "-n", "fw", "-d", flat, out}
+			},
+			ours: func(elf, out string) []string {
+				return []string{"-O", "uimage", "--uimage-comp", "gzip", "--uimage-arch", "arm", "--load", "0x80000", "--entry", "0x80000", "--name", "fw", "-o", out, elf}
+			}},
+	}
+	if t.uf2conv != "" {
+		rows = append(rows, op{name: "-O uf2 (uf2conv.py: flat file in)",
+			ref: func(t tools, _, flat, out string) []string {
+				return []string{"python3", t.uf2conv, "-c", "-b", "0x80000", "-f", "0xe48bff56", "-o", out, flat}
+			},
+			ours: func(flat, out string) []string {
+				return []string{"-I", "binary", "--base", "0x80000", "-O", "uf2", "--uf2-family", "rp2040", "-o", out, flat}
+			}})
+	}
+	return rows
+}
 
 var ops = []op{
 	{"-O binary",
@@ -92,6 +126,7 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 	fs.StringVar(&t.objcopy, "objcopy", "objcopy", "objcopy binary")
 	fs.StringVar(&t.mkimage, "mkimage", "mkimage", "mkimage binary")
 	fs.StringVar(&t.fwimg, "fwimg", "fwimg", "fwimg binary")
+	fs.StringVar(&t.uf2conv, "uf2conv", "", "path of uf2conv.py (microsoft/uf2); empty skips the UF2 row")
 	rounds := fs.Int("rounds", 40, "interleaved rounds per operation and file")
 	hello := fs.String("hello", "", "empty Go program (internal/floor/hello), built like fwimg: with -cobra, adds the floor table")
 	cobra := fs.String("cobra", "", "cobra root that does nothing (internal/floor/cobraonly), built like fwimg")
@@ -145,8 +180,12 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 			src string
 		}
 		var rows []row
-		for _, o := range ops {
-			rows = append(rows, row{o, f.path})
+		for _, o := range append(slices.Clone(ops), l5Ops(t)...) {
+			src := f.path
+			if fromFlat(o) {
+				src = flat
+			}
+			rows = append(rows, row{o, src})
 		}
 		for _, d := range decodeOps {
 			text := filepath.Join(dir, "in."+d.kind)
