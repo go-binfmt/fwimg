@@ -17,6 +17,10 @@ WebAssembly (ROADMAP lot L6):
 * `internal/wasmbench`: wasm against native timings at 1 KiB, 4 MiB, 32 MiB.
 * A client-side playground on the go-binfmt docs site.
 
+The js module is 7.2 MB (1.9 MB with gzip -9). Measured on a CI runner, wasm
+is 4.6x to 13x slower than native at 32 MiB (README, "WebAssembly and the
+playground"); that gap is an open performance defect, not a gate.
+
 No change to the CLI or the library.
 
 New formats (ROADMAP lot L5):
