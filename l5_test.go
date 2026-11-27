@@ -545,3 +545,62 @@ func TestVerifyUImage_UndecodablePayloadNamesTheContainer(t *testing.T) {
 		t.Errorf("undecodable payload: %v", err)
 	}
 }
+
+// Each way VerifyUF2 can disagree says which one it was, not only that it did.
+func TestVerifyUF2_NamesTheDisagreement(t *testing.T) {
+	good := rawAt(t, bytes.Repeat([]byte{7}, 300), 0x2000)
+	written, err := EncodeUF2(good, UF2Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyUF2(written, good, UF2Options{}); err != nil {
+		t.Fatalf("identical: %v", err)
+	}
+	other := rawAt(t, bytes.Repeat([]byte{8}, 300), 0x2000)
+	for name, c := range map[string]struct {
+		written []byte
+		im      *Image
+		opts    UF2Options
+		in      string // must appear in the message
+		notIn   string // must not
+	}{
+		"image not encodable":  {written, rawAt(t, []byte{1}, 0x2002), UF2Options{}, "multiple of 4", ""},
+		"file not decodable":   {bytes.Repeat([]byte{1}, 512), good, UF2Options{}, "", "the file is not the"},
+		"wanted not decodable": {written, &Image{}, UF2Options{}, "", "the file is not the"},
+		"family":               {written, good, UF2Options{Family: 0xe48bff56}, "family", ""},
+		"content":              {written, other, UF2Options{}, "", "the file is not the"},
+	} {
+		err := VerifyUF2(c.written, c.im, c.opts)
+		if !errors.Is(err, ErrVerify) {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		if c.in != "" && !strings.Contains(err.Error(), c.in) {
+			t.Errorf("%s: %q lacks %q", name, err, c.in)
+		}
+		if c.notIn != "" && strings.Contains(err.Error(), c.notIn) {
+			t.Errorf("%s: %q holds %q", name, err, c.notIn)
+		}
+	}
+}
+
+// The Verilog encoder refuses a text past the bound before it makes it, and the
+// decoder names a character that is not a hex digit.
+func TestVerilog_BoundAndDigitMessage(t *testing.T) {
+	old := maxText
+	defer func() { maxText = old }()
+	im := rawAt(t, make([]byte, 10), 0)
+	maxText = 20 + 10*3 + (10/verilogLine+1)*2
+	if _, err := EncodeVerilog(im, VerilogOptions{}); err != nil {
+		t.Fatalf("at the bound: %v", err)
+	}
+	maxText--
+	if _, err := EncodeVerilog(im, VerilogOptions{}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("past the bound: %v", err)
+	}
+	maxText = old
+	_, err := DecodeVerilog([]byte("@0\n0g\n"), VerilogOptions{}, DecodeOptions{})
+	if !errors.Is(err, ErrSyntax) || !strings.Contains(err.Error(), "not a hex digit") {
+		t.Errorf("non-hex digit: %v", err)
+	}
+}

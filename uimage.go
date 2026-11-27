@@ -225,9 +225,8 @@ func UImageImageOpts(data []byte, opts DecodeOptions) (*Image, error) {
 		if err != nil {
 			return nil, err
 		}
-		if im, err = RawImage(raw, uint64(h.Load)); err != nil {
-			return nil, err
-		}
+		// A 32-bit load address cannot overflow 2^64, the only refusal of RawImage.
+		im, _ = RawImage(raw, uint64(h.Load))
 		im.Entry, im.HasEntry, im.Name, im.UImage = uint64(h.Entry), true, h.Name, h
 	}
 	return im, nil
