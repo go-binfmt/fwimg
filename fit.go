@@ -196,15 +196,11 @@ func AppendFIT(dst []byte, o FITOptions) ([]byte, error) {
 	}
 	t := fdt.New()
 	root := t.Root
-	if err := root.SetUint32("timestamp", o.Time); err != nil {
-		return nil, err
-	}
+	_ = root.SetUint32("timestamp", o.Time) // a constant, valid name: Set cannot fail
 	if err := root.SetString("description", o.Description); err != nil {
 		return nil, err
 	}
-	if err := root.SetUint32("#address-cells", uint32(cells)); err != nil {
-		return nil, err
-	}
+	_ = root.SetUint32("#address-cells", uint32(cells))
 	images, _ := root.AddChild("images")
 	var store, total uint64 // the data's size so far (aligned), and the sum of the sizes
 	var stored int
@@ -213,7 +209,7 @@ func AppendFIT(dst []byte, o FITOptions) ([]byte, error) {
 		if im.Type == "" {
 			return nil, fmt.Errorf("fit: image %q has no type", im.Name)
 		}
-		if uint64(len(im.Data)) > math.MaxUint32 {
+		if uint64(len(im.Data)) > maxFITSize {
 			return nil, fmt.Errorf("fit: image %q is %d bytes, above the 4 GiB a FIT holds", im.Name, len(im.Data))
 		}
 		n, err := images.AddChild(im.Name)
@@ -266,7 +262,7 @@ func AppendFIT(dst []byte, o FITOptions) ([]byte, error) {
 		room += int(store - total) // the padding of every image
 	}
 	dst = slices.Grow(dst, room)
-	dst, err := t.AppendMarshal(dst)
+	dst, err := appendMarshal(t, dst)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +288,15 @@ func AppendFIT(dst []byte, o FITOptions) ([]byte, error) {
 	return dst, nil
 }
 
+// appendMarshal is fdt's AppendMarshal; a variable so that a test can make it
+// fail (its only real failure is a blob above 4 GiB).
+var appendMarshal = (*fdt.Tree).AppendMarshal
+
+// maxFITSize is the largest image, and the largest data-offset, a FIT holds:
+// data-size and data-offset are one 32-bit cell. A variable so that a test can
+// lower it instead of allocating 4 GiB.
+var maxFITSize uint64 = math.MaxUint32
+
 // WriteFIT is AppendFIT to a new buffer.
 func WriteFIT(o FITOptions) ([]byte, error) { return AppendFIT(nil, o) }
 
@@ -300,23 +305,17 @@ func WriteFIT(o FITOptions) ([]byte, error) { return AppendFIT(nil, o) }
 func writeFITImage(n *fdt.Node, im *FITImage, cells int, o FITOptions, store *uint64, align uint64) error {
 	size := uint64(len(im.Data))
 	if o.External {
-		if err := n.SetUint32("data-size", uint32(size)); err != nil {
-			return err
-		}
+		_ = n.SetUint32("data-size", uint32(size)) // constant names, sizes checked: Set cannot fail
 		if o.HasPosition {
 			if o.Position+*store+size > math.MaxUint32 && cells == 1 {
 				return errors.New("data position does not fit one address cell")
 			}
-			if err := n.SetCell("data-position", cells, o.Position+*store); err != nil {
-				return err
-			}
+			_ = n.SetCell("data-position", cells, o.Position+*store) // fits, as just checked
 		} else {
-			if *store > math.MaxUint32 {
+			if *store > maxFITSize {
 				return errors.New("data offset does not fit 32 bits")
 			}
-			if err := n.SetUint32("data-offset", uint32(*store)); err != nil {
-				return err
-			}
+			_ = n.SetUint32("data-offset", uint32(*store))
 		}
 		*store += alignUp(size, align)
 	}
