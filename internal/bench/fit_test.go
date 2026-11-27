@@ -40,7 +40,7 @@ func TestRunFITSetupRefusals(t *testing.T) {
 	// (the fake fwimg puts it there, after the path of the flat payload, $4).
 	blocker := script(`mkdir "$4.its"`)
 	err = run([]string{"-objcopy", tr, "-mkimage", tr, "-fwimg", blocker, "-dumpimage", tr, "-rounds", "1"}, &w, mk)
-	if err == nil || !strings.Contains(err.Error(), ".its") {
+	if err == nil || !strings.Contains(err.Error(), "is a directory") {
 		t.Errorf("an unwritable ITS: %v", err)
 	}
 }
