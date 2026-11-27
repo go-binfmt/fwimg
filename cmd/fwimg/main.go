@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"errors"
 	"fmt"
@@ -530,7 +531,7 @@ func run(o *options, input string) (err error) {
 	}
 	if !o.noVerify {
 		afterWrite(o.output)
-		if err := verifyOutput(o, im, fo.Pad, uopts); err != nil {
+		if err := verifyOutput(o, im, fo.Pad, uopts, out); err != nil {
 			if rerr := removeFile(o.output); rerr != nil {
 				err = errors.Join(err, rerr)
 			}
@@ -573,12 +574,23 @@ func writeManifest(o *options, im *fwimg.Image, src *source, in string, data []b
 // before it is read back, where a test damages the file.
 var afterWrite = func(string) {}
 
+// readBack reads a differing output whole, to name its first difference; it is
+// replaceable in tests, where the file goes away between the two reads.
+var readBack = readInput
+
 // verifyOutput reads the file just written back and compares it with the image:
 // the flat binary byte for byte, an S-record or Intel HEX file decoded to an
 // image and compared by address with the start address, a uImage by its CRCs,
 // header and payload. Only a regular file is checked: a device, a pipe or a
 // symbolic link (/dev/stdout) cannot be read back, or removed, as this file can.
-func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptions) error {
+//
+// For the formats built in memory (everything but the flat binary) the check has
+// two steps. The file is first compared, in chunks, with the bytes that were
+// written: when they are equal there is nothing more to say, and that costs a
+// read and a memcmp. Decoding the file back, which took twice as long as writing
+// it (go-binfmt/fwimg, bench at v0.5.0: +196 % at 32 MiB), is only the way to
+// name the first difference when they are not equal.
+func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptions, written []byte) error {
 	if st, err := os.Lstat(o.output); err == nil && !st.Mode().IsRegular() {
 		return nil
 	}
@@ -590,7 +602,11 @@ func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptio
 		defer f.Close()
 		return fwimg.VerifyFlat(f, im, pad)
 	}
-	b, err := readInput(o.output)
+	same, err := sameBytes(o.output, written)
+	if err != nil || same {
+		return err
+	}
+	b, err := readBack(o.output)
 	if err != nil {
 		return err
 	}
@@ -598,16 +614,59 @@ func verifyOutput(o *options, im *fwimg.Image, pad byte, uopts fwimg.UImageOptio
 	dopts := fwimg.DecodeOptions{MaxSize: math.MaxInt32}
 	switch o.format {
 	case "uimage":
-		return fwimg.VerifyUImage(b, im, pad, uopts)
+		err = fwimg.VerifyUImage(b, im, pad, uopts)
 	case "srec":
 		got, err = fwimg.DecodeSREC(b, dopts)
 	default:
 		got, err = fwimg.DecodeIHEX(b, dopts)
 	}
-	if err != nil {
+	switch {
+	case err != nil && o.format == "uimage":
+		return err
+	case err != nil:
 		return fmt.Errorf("%w: %v", fwimg.ErrVerify, err)
+	case got != nil:
+		if err := fwimg.CompareImages(im, got); err != nil {
+			return err
+		}
 	}
-	return fwimg.CompareImages(im, got)
+	// It reads back as the same image but is not the file that was written.
+	return fmt.Errorf("%w: the file is not the %d bytes that were written", fwimg.ErrVerify, len(written))
+}
+
+// verifyChunk is the buffer sameBytes reads in: small enough to stay in cache,
+// so the file is read once into memory that is already mapped.
+const verifyChunk = 256 << 10
+
+// sameBytes reports whether the file at path holds exactly want. An error is a
+// failure to read it, not a difference.
+func sameBytes(path string, want []byte) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	buf := make([]byte, min(len(want)+1, verifyChunk))
+	for len(want) > 0 {
+		got := buf[:min(len(want), len(buf))]
+		if _, err := io.ReadFull(f, got); err == io.EOF || err == io.ErrUnexpectedEOF {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		if !bytes.Equal(got, want[:len(got)]) {
+			return false, nil
+		}
+		want = want[len(got):]
+	}
+	switch n, err := f.Read(buf[:1]); {
+	case n > 0:
+		return false, nil // longer than what was written
+	case err == io.EOF:
+		return true, nil
+	default:
+		return false, err
+	}
 }
 
 // uimageTime is the creation time of a uImage: --time, else SOURCE_DATE_EPOCH

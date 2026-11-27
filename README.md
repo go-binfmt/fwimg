@@ -88,10 +88,14 @@ fwimg -O uimage --time 1700000000 --load 0x80000 -o uImage fw.elf
   segment that overflows its region or lies outside every region, naming the
   segment and the byte excess, in the shape of ld's "region `X' overflowed by N
   bytes".
-* **Verify after write** is on by default. The output is read back with the
-  decoders (binary, S-record, Intel HEX, uImage) and compared byte for byte and
-  address by address, start address included. On a mismatch the command fails and
-  no file is left behind. The file is written by unlink and create, as in
+* **Verify after write** is on by default. The output is read back and compared
+  byte for byte with what was written: a flat binary with the image's segments
+  and pad, the other formats with the bytes that were encoded, in 256 KiB chunks.
+  Only when they differ is the file decoded, to name the first difference by
+  address (start address included). The encoders are checked against the decoders
+  by the tests and the fuzzers, not on every run: decoding the file back took
+  twice as long as writing it (+196 % at 32 MiB at v0.5.0). On a mismatch the
+  command fails and no file is left behind. The file is written by unlink and create, as in
   v0.4.2; verification is skipped for a non-regular output (device, symlink).
   `--no-verify` turns it off; its cost is in the CI `bench` job summary.
 * **`SOURCE_DATE_EPOCH`** sets the uImage time, as mkimage does
