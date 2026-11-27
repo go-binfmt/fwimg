@@ -99,6 +99,25 @@ func TestTextRefusals(t *testing.T) {
 	if err := runText(dir); err == nil || !strings.Contains(err.Error(), "valid-empty") {
 		t.Errorf("err = %v, want it to name the seed", err)
 	}
+	// Each corpus failing alone, the others writable, still fails: the text one
+	// and the L5 one.
+	text := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(text, "FuzzIHEX", "valid-empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := all(text); err == nil || !strings.Contains(err.Error(), "valid-empty") {
+		t.Errorf("all with an unwritable text corpus: err = %v", err)
+	}
+	l5 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(l5, "FuzzUF2"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runL5(l5); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+		t.Errorf("runL5 with an unwritable corpus: err = %v", err)
+	}
+	if err := all(l5); err == nil || !strings.HasPrefix(err.Error(), "mkdir ") {
+		t.Errorf("all with an unwritable L5 corpus: err = %v", err)
+	}
 	// The seeds that panic on a library error are only reached with a broken
 	// encoder: the helper itself is checked here.
 	defer func() {

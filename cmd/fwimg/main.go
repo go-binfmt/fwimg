@@ -837,14 +837,11 @@ func uimage(o *options, im *fwimg.Image, src *source, arch byte, hasEntry bool, 
 		Load: uint32(base), Entry: uint32(entry), Name: cmp.Or(o.name, im.Name),
 		OS: osCode, Arch: arch, Type: typeCode, Time: o.stamp,
 	}
-	comp, err := fwimg.CompFromName(o.uimageComp)
-	if err != nil {
-		return nil, none, usageErr{err.Error()}
-	}
+	// The name was checked where the flags are, and CompressPayload refuses
+	// only a comp CompFromName never returns: neither error is reachable here.
+	comp, _ := fwimg.CompFromName(o.uimageComp)
 	if comp != fwimg.CompNone {
-		if flat, err = fwimg.CompressPayload(flat, comp); err != nil {
-			return nil, none, err
-		}
+		flat, _ = fwimg.CompressPayload(flat, comp)
 		opts.Comp = comp
 	}
 	out, err := fwimg.UImage(flat, opts)

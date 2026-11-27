@@ -132,6 +132,18 @@ func TestL5_Verilog(t *testing.T) {
 	}
 }
 
+// info on a uImage that says gzip over bytes that are not gzip is refused.
+func TestL5_InfoRefusesAnUndecodablePayload(t *testing.T) {
+	bad, err := fwimg.UImage([]byte("not gzip at all"), fwimg.UImageOptions{Load: 0x8000, Entry: 0x8000, Comp: fwimg.CompGzip})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runCmd(t, "info", put(t, "bad.uimg", bad))
+	if err == nil || !strings.Contains(err.Error(), "gzip") {
+		t.Errorf("info: %v", err)
+	}
+}
+
 func TestL5_FlagRefusals(t *testing.T) {
 	in := put(t, "in.bin", []byte("abcd"))
 	base := []string{"-I", "binary", "--base", "0x1000"}
@@ -139,16 +151,17 @@ func TestL5_FlagRefusals(t *testing.T) {
 		args []string
 		want string
 	}{
-		"comp without uimage": {[]string{"-O", "srec", "--uimage-comp", "gzip"}, "only for -O uimage"},
-		"unknown comp":        {[]string{"-O", "uimage", "--uimage-comp", "bzip2", "--uimage-arch", "arm", "--entry", "0"}, "bzip2"},
-		"family without uf2":  {[]string{"-O", "srec", "--uf2-family", "rp2040"}, "only for -O uf2"},
-		"unknown family":      {[]string{"-O", "uf2", "--uf2-family", "nosuchchip"}, "nosuchchip"},
-		"zero family":         {[]string{"-O", "uf2", "--uf2-family", "0"}, "non-zero"},
-		"width 0":             {[]string{"-O", "verilog", "--verilog-data-width", "0"}, "1 to 8"},
-		"width 9":             {[]string{"-O", "verilog", "--verilog-data-width", "9"}, "1 to 8"},
-		"bad endian":          {[]string{"-O", "verilog", "--verilog-endian", "middle"}, "little or big"},
-		"unaligned verilog":   {[]string{"-O", "verilog", "--verilog-data-width", "8"}, "multiple of the data width"},
-		"unaligned uf2":       {[]string{"-O", "uf2", "--base", "0x1001"}, "UF2"},
+		"comp without uimage":        {[]string{"-O", "srec", "--uimage-comp", "gzip"}, "only for -O uimage"},
+		"unknown comp":               {[]string{"-O", "uimage", "--uimage-comp", "bzip2", "--uimage-arch", "arm", "--entry", "0"}, "bzip2"},
+		"unknown comp, other format": {[]string{"-O", "srec", "--uimage-comp", "bzip2"}, "bzip2"},
+		"family without uf2":         {[]string{"-O", "srec", "--uf2-family", "rp2040"}, "only for -O uf2"},
+		"unknown family":             {[]string{"-O", "uf2", "--uf2-family", "nosuchchip"}, "nosuchchip"},
+		"zero family":                {[]string{"-O", "uf2", "--uf2-family", "0"}, "non-zero"},
+		"width 0":                    {[]string{"-O", "verilog", "--verilog-data-width", "0"}, "1 to 8"},
+		"width 9":                    {[]string{"-O", "verilog", "--verilog-data-width", "9"}, "1 to 8"},
+		"bad endian":                 {[]string{"-O", "verilog", "--verilog-endian", "middle"}, "little or big"},
+		"unaligned verilog":          {[]string{"-O", "verilog", "--verilog-data-width", "8"}, "multiple of the data width"},
+		"unaligned uf2":              {[]string{"-O", "uf2", "--base", "0x1001"}, "UF2"},
 	} {
 		args := append(append([]string{}, base...), c.args...)
 		if name == "unaligned uf2" {
