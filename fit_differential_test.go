@@ -61,13 +61,33 @@ func withoutCompat(s string) string {
 		switch {
 		case strings.HasPrefix(strings.TrimSpace(l), "Compatible:"):
 			in = true
-		case in && strings.HasPrefix(l, strings.Repeat(" ", 24)):
+		case in && strings.HasPrefix(l, strings.Repeat(" ", 16)):
 		default:
 			in = false
 			keep = append(keep, l)
 		}
 	}
 	return strings.Join(keep, "")
+}
+
+func TestWithoutCompat(t *testing.T) {
+	o := fitCase()
+	o.Configs[0].Compatible = []string{"a,b", "c,d"}
+	b, err := WriteFIT(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ParseFIT(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, got := f.Listing(), withoutCompat(f.Listing())
+	if !strings.Contains(full, "Compatible:") || !strings.Contains(full, "c,d") {
+		t.Fatalf("the listing has no compatible strings:\n%s", full)
+	}
+	if strings.Contains(got, "Compatible:") || strings.Contains(got, "a,b") || strings.Contains(got, "c,d") || !strings.Contains(got, "FDT:") {
+		t.Errorf("withoutCompat left:\n%s", got)
+	}
 }
 
 // tool runs a reference tool with the creation time and the time zone pinned,
