@@ -151,7 +151,12 @@ an in-memory file system (`playground/engine.js`) instead of a second
 `syscall/js` entry, so there is one code path and the bytes are the same by
 construction.
 
-## L7 — FIT (go-binfmt/fdt v0.1.0, then fwimg v0.9.0)
+## L7 — FIT (go-binfmt/fdt v0.1.0, then fwimg v0.9.0) — done
+
+Step 1 shipped as fdt v0.1.0, step 2 as fwimg v0.9.0 (CHANGELOG). Two facts
+measured against mkimage 2026.10 while pinning the layout: `-E` pads every image
+to 8 bytes (not 4) and `-p` pads the structure to 8; the structure is padded to 4
+otherwise. Open: signing (a design note first).
 
 1. New repository `go-binfmt/fdt`: DTB v17 reader and writer (spec-notes
    §7), fuzzed, differentially tested against `dtc -I dtb -O dts` and

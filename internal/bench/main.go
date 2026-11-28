@@ -44,7 +44,56 @@ type op struct {
 // ELF, because the reference has no ELF reader (uf2conv.py).
 func fromFlat(o op) bool { return strings.HasPrefix(o.name, "-O uf2") }
 
-type tools struct{ objcopy, mkimage, fwimg, uf2conv string }
+type tools struct{ objcopy, mkimage, fwimg, uf2conv, dumpimage string }
+
+// fitWrite is the FIT row of v0.9.0: mkimage -f compiles an ITS that includes
+// the flat payload (flat+".its", written per fixture) and fwimg builds the same
+// FIT from the ELF, both with a sha256 hash and one configuration.
+var fitWrite = op{name: "-O fit (mkimage -f: ITS + flat file in)",
+	ref: func(t tools, _, flat, out string) []string { return []string{t.mkimage, "-f", flat + ".its", out} },
+	ours: func(elf, out string) []string {
+		return []string{"-O", "fit", "--uimage-arch", "arm64", "--load", "0x80000", "--entry", "0x80000", "--name", "fw", "--time", "0", "-o", out, elf}
+	}}
+
+// itsFor is the ITS fitWrite's reference compiles.
+func itsFor(flat string) string {
+	return fmt.Sprintf(`/dts-v1/;
+/ {
+	description = "fw";
+	#address-cells = <1>;
+	images {
+		kernel-1 {
+			description = "fw";
+			data = /incbin/(%q);
+			type = "kernel";
+			arch = "arm64";
+			os = "linux";
+			compression = "none";
+			load = <0x80000>;
+			entry = <0x80000>;
+			hash-1 { algo = "sha256"; };
+		};
+	};
+	configurations {
+		default = "conf-1";
+		conf-1 { description = "fw"; kernel = "kernel-1"; };
+	};
+};
+`, flat)
+}
+
+// fitReadOps list a FIT: the input side. The FIT is made once per fixture by
+// mkimage, and every program reads that same file.
+func fitReadOps(t tools) []op {
+	return []op{
+		{name: "-l FIT (mkimage -l; fwimg info)",
+			ref:  func(t tools, in, _, _ string) []string { return []string{t.mkimage, "-l", in} },
+			ours: func(in, _ string) []string { return []string{"info", in} }},
+		{name: "-l FIT (dumpimage -l; fwimg info)",
+			ref:  func(t tools, in, _, _ string) []string { return []string{t.dumpimage, "-l", in} },
+			ours: func(in, _ string) []string { return []string{"info", in} }},
+	}
+}
 
 // l5Ops are the formats of v0.7.0 and their reference tools. The UF2 row
 // needs uf2conv.py (-uf2conv), so it is added only when given.
@@ -127,6 +176,7 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 	fs.StringVar(&t.mkimage, "mkimage", "mkimage", "mkimage binary")
 	fs.StringVar(&t.fwimg, "fwimg", "fwimg", "fwimg binary")
 	fs.StringVar(&t.uf2conv, "uf2conv", "", "path of uf2conv.py (microsoft/uf2); empty skips the UF2 row")
+	fs.StringVar(&t.dumpimage, "dumpimage", "", "dumpimage binary; empty skips the FIT rows (write against mkimage -f, read against mkimage -l and dumpimage -l)")
 	rounds := fs.Int("rounds", 40, "interleaved rounds per operation and file")
 	hello := fs.String("hello", "", "empty Go program (internal/floor/hello), built like fwimg: with -cobra, adds the floor table")
 	cobra := fs.String("cobra", "", "cobra root that does nothing (internal/floor/cobraonly), built like fwimg")
@@ -186,6 +236,19 @@ func run(args []string, w io.Writer, mk func(dir string) ([]fixture, error)) err
 				src = flat
 			}
 			rows = append(rows, row{o, src})
+		}
+		if t.dumpimage != "" {
+			if err := os.WriteFile(flat+".its", []byte(itsFor(flat)), 0o644); err != nil {
+				return err
+			}
+			rows = append(rows, row{fitWrite, f.path})
+			fit := filepath.Join(dir, "in.fit")
+			if b, err := exec.Command(t.mkimage, "-f", flat+".its", fit).CombinedOutput(); err != nil {
+				return fmt.Errorf("mkimage -f on %s: %v: %s", f.name, err, b)
+			}
+			for _, o := range fitReadOps(t) {
+				rows = append(rows, row{o, fit})
+			}
 		}
 		for _, d := range decodeOps {
 			text := filepath.Join(dir, "in."+d.kind)

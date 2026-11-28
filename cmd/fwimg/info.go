@@ -33,9 +33,9 @@ func (f *inputFlags) bind(cmd *cobra.Command) {
 // checkInput validates -I and --base and returns the address of a raw binary.
 func checkInput(format, base string) (uint64, error) {
 	switch format {
-	case "", fwimg.FormatELF, fwimg.FormatIHEX, fwimg.FormatSREC, fwimg.FormatUImage, fwimg.FormatUF2, fwimg.FormatVerilog, fwimg.FormatBinary:
+	case "", fwimg.FormatELF, fwimg.FormatIHEX, fwimg.FormatSREC, fwimg.FormatUImage, fwimg.FormatFIT, fwimg.FormatUF2, fwimg.FormatVerilog, fwimg.FormatBinary:
 	default:
-		return 0, usageErr{fmt.Sprintf("unknown --input-target %q (want elf, ihex, srec, uimage, uf2, verilog, binary)", format)}
+		return 0, usageErr{fmt.Sprintf("unknown --input-target %q (want elf, ihex, srec, uimage, fit, uf2, verilog, binary)", format)}
 	}
 	switch {
 	case format == fwimg.FormatBinary && base == "":
@@ -52,6 +52,7 @@ func checkInput(format, base string) (uint64, error) {
 type loaded struct {
 	im     *fwimg.Image
 	stored *fwimg.Image // a uImage as stored, compressed or not; nil for any other input
+	fit    *fwimg.FIT   // a FIT (then im and src are nil)
 	src    *source
 	format string
 	data   []byte
@@ -85,6 +86,13 @@ func (f *inputFlags) with(input string, fn func(*loaded) error) (err error) {
 		}
 	}
 	l := &loaded{format: in, data: data, maxSz: fo.MaxSize}
+	if in == fwimg.FormatFIT {
+		// A FIT is a tree of images, not one image: fn reads l.fit.
+		if l.fit, err = fwimg.ParseFIT(data); err != nil {
+			return fmt.Errorf("%s: %w", input, err)
+		}
+		return fn(l)
+	}
 	if in == fwimg.FormatUImage {
 		l.src = &source{}
 		if l.stored, err = fwimg.UImageStored(data); err != nil {
@@ -170,6 +178,14 @@ schema is manifest-1.schema.json, see the README), for every format.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return f.with(args[0], func(l *loaded) error {
 				out := cmd.OutOrStdout()
+				if l.fit != nil {
+					if asJSON {
+						_, err := out.Write(fitDescribe(l.fit, len(l.data)))
+						return err
+					}
+					_, err := io.WriteString(out, l.fit.Listing())
+					return err
+				}
 				if l.format == fwimg.FormatUImage && !asJSON {
 					comps, err := l.stored.UImage.Components(payload(l.stored))
 					if err != nil {
@@ -265,8 +281,9 @@ func readManifest(path string) (*fwimg.Manifest, error) {
 func verifyCmd() *cobra.Command {
 	var f inputFlags
 	var manifest string
+	var reqHash, allowSig bool
 	cmd := &cobra.Command{
-		Use:   "verify --manifest FILE IMAGE",
+		Use:   "verify (--manifest FILE) IMAGE",
 		Short: "Check an image, in any format, against the hashes of a manifest",
 		Long: `verify reads IMAGE (an ELF, Intel HEX, S-record, uImage or, with -I binary --base
 ADDR, a raw binary) and recomputes from its bytes the base address, size, start
@@ -286,14 +303,31 @@ image. Every difference is listed; the exit status is 1 if there is one.`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if manifest == "" {
-				return usageErr{"--manifest FILE is required"}
-			}
-			m, err := readManifest(manifest)
-			if err != nil {
-				return err
+			var m *fwimg.Manifest
+			if manifest != "" {
+				var err error
+				if m, err = readManifest(manifest); err != nil {
+					return err
+				}
 			}
 			return f.with(args[0], func(l *loaded) error {
+				if l.fit != nil {
+					if m != nil {
+						return usageErr{errNoFITManifest.Error()}
+					}
+					if err := l.fit.Verify(fwimg.FITVerifyOptions{RequireHash: reqHash, AllowSignatures: allowSig}); err != nil {
+						return fmt.Errorf("%s: %w", args[0], err)
+					}
+					n := 0
+					for _, im := range l.fit.Images {
+						n += len(im.Hashes)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%s: FIT ok (%d images, %d hashes, %d configurations)\n", args[0], len(l.fit.Images), n, len(l.fit.Configs))
+					return nil
+				}
+				if m == nil {
+					return usageErr{"--manifest FILE is required"}
+				}
 				if err := m.Verify(l.im, fwimg.VerifyOptions{MaxSize: l.maxSz}); err != nil {
 					return fmt.Errorf("%s: %w", args[0], err)
 				}
@@ -303,7 +337,9 @@ image. Every difference is listed; the exit status is 1 if there is one.`,
 		},
 	}
 	f.bind(cmd)
-	cmd.Flags().StringVar(&manifest, "manifest", "", "the manifest to check against (required)")
+	cmd.Flags().StringVar(&manifest, "manifest", "", "the manifest to check against (required, except for a FIT)")
+	cmd.Flags().BoolVar(&reqHash, "require-hash", false, "FIT: refuse an image that has no hash node")
+	cmd.Flags().BoolVar(&allowSig, "allow-signatures", false, "FIT: accept signature nodes, which are not checked (without it they are refused)")
 	return cmd
 }
 

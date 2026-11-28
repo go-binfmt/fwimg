@@ -17,7 +17,7 @@ jobs:
       - name: reference tools (objcopy, srec_cat, mkimage, gcc)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools device-tree-compiler
           objcopy --version
           srec_cat -version
           mkimage -V
@@ -57,7 +57,7 @@ jobs:
       - name: reference tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools device-tree-compiler
       - name: UF2 reference (uf2conv.py, uf2families.json)
         run: |
           d="$RUNNER_TEMP/uf2"
@@ -95,6 +95,8 @@ jobs:
         run: go test -run '^$' -fuzz '^FuzzVerilog$' -fuzztime 60s .
       - name: fuzz FuzzUImageComp for 60 seconds
         run: go test -run '^$' -fuzz '^FuzzUImageComp$' -fuzztime 60s .
+      - name: fuzz FuzzFIT for 60 seconds
+        run: go test -run '^$' -fuzz '^FuzzFIT$' -fuzztime 60s .
 
   # s390x is BIG-ENDIAN; the ELF parser and the encoders run under that byte
   # order here.
@@ -253,7 +255,7 @@ jobs:
         with: { go-version: '1.27.4' }
       - run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools
+          sudo apt-get install -y -qq gcc binutils srecord u-boot-tools device-tree-compiler
       # uf2conv.py, the UF2 reference (microsoft/uf2 at a pinned commit).
       - run: |
           mkdir -p "$RUNNER_TEMP/uf2"
@@ -267,7 +269,7 @@ jobs:
           go build -o "$RUNNER_TEMP/cobraonly" ./internal/floor/cobraonly
           go build -o "$RUNNER_TEMP/bench" ./internal/bench
           uptime
-          taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -fwimg "$RUNNER_TEMP/fwimg" -uf2conv "$RUNNER_TEMP/uf2/uf2conv.py" -hello "$RUNNER_TEMP/hello" -cobra "$RUNNER_TEMP/cobraonly" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
+          taskset -c 0 "$RUNNER_TEMP/bench" -objcopy "$(command -v objcopy)" -mkimage "$(command -v mkimage)" -dumpimage "$(command -v dumpimage)" -fwimg "$RUNNER_TEMP/fwimg" -uf2conv "$RUNNER_TEMP/uf2/uf2conv.py" -hello "$RUNNER_TEMP/hello" -cobra "$RUNNER_TEMP/cobraonly" -rounds 60 | tee "$RUNNER_TEMP/bench.md"
           cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
       # Where the time above a cobra root that does nothing goes
       # (go-binfmt/fwimg#2): the steps of one cold fwimg process, then what

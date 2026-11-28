@@ -236,6 +236,9 @@ func Detect(data []byte) string {
 	if len(data) >= 4 && data[0] == 0x27 && data[1] == 0x05 && data[2] == 0x19 && data[3] == 0x56 {
 		return FormatUImage
 	}
+	if len(data) >= 4 && binary.BigEndian.Uint32(data) == 0xd00dfeed {
+		return FormatFIT // a devicetree blob; whether it is a FIT is ParseFIT's to say
+	}
 	i := 0
 	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r' || data[i] == '\n') {
 		i++

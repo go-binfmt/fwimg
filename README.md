@@ -70,6 +70,36 @@ fwimg -O ihex --ihex-mode objcopy --crlf -o fw.hex fw.elf
   was dropped from Intel HEX before).
 * `--crlf` ends every line with CR LF, as objcopy and srec_cat do (LF by default).
 
+## FIT (v0.9.0)
+
+```
+fwimg -O fit --fit-add fdt:board.dtb --fit-add ramdisk@0x8000000:initrd.img -o kernel.fit kernel.elf
+fwimg -O fit --fit-external --fit-align 1000 -o kernel.fit kernel.elf   # like mkimage -E -B 1000
+fwimg info kernel.fit                                                   # as mkimage -l prints it
+fwimg verify --require-hash kernel.fit                                  # every hash node
+```
+
+A FIT is a devicetree blob ([fitspec](https://fitspec.osfw.foundation/)) built
+on [go-binfmt/fdt](https://github.com/go-binfmt/fdt). `-O fit` makes the input
+the kernel image (load address from the image, entry from the ELF, architecture
+from the ELF or `--uimage-arch`) and each `--fit-add` file another image, with
+one hash node per `--fit-hash` algorithm on all of them and a configuration
+`conf-1` that names them. `--fit-external` keeps the data after the structure
+(`data-offset`), `--fit-position` at an absolute address (`data-position`);
+`--fit-align` is mkimage `-B`, in hex and a power of two. Images are padded to 8
+bytes (`mkimage -E`), or to the alignment. Signing is not supported: a FIT with
+signature nodes is refused by `verify` unless `--allow-signatures`, which says
+that the signatures were not checked.
+
+`fwimg verify` reads a FIT's own hashes, so it takes no manifest; `--manifest`
+with `-O fit` is refused. The reader refuses external data outside the file, in
+the structure or over another image, a `load + size` that wraps, a hash node
+without an algorithm or a value of the right length, a configuration naming an
+image that is not there, and names that differ only by a unit address (the
+CVE-2021-27138 class); `docs/spec-notes.md` section 6 lists the CVEs and each has
+a regression test. Library: `WriteFIT`, `AppendFIT`, `ParseFIT`, `(*FIT).Verify`,
+`(*FIT).Listing`.
+
 ## UF2, Verilog hex and compressed uImage (v0.7.0)
 
 ```
@@ -351,6 +381,26 @@ output first, as objcopy does; v0.4.3 maps an ELF input instead of reading it.
 The 32 MiB row is now even to 1.2x between runs; the 4 MiB row is behind by
 about 0.3 ms, a start-up cost of the Go runtime (some 330 more page faults
 than objcopy), the same one as the 1 KiB rows.
+
+The FIT rows (v0.9.0), from the `bench` job of the CI run on the pull request
+that added them (go-binfmt/fwimg#30, head `64feeef`; Ubuntu x86-64 runner,
+mkimage 2025.10, 60 rounds, one core), quoted as printed:
+
+| file | operation | reference | fwimg | reference / fwimg |
+|---|---|---:|---:|---:|
+| small (1 KiB) | `-O fit` (mkimage -f: ITS + flat file in) | 3.7ms | 2.76ms | 1.3x |
+| small (1 KiB) | `info` (mkimage -l) | 1.7ms | 2.47ms | 0.7x |
+| small (1 KiB) | `info` (dumpimage -l) | 1.7ms | 2.44ms | 0.7x |
+| 4 MiB | `-O fit` (mkimage -f) | 32.43ms | 11.81ms | 2.7x |
+| 4 MiB | `info` (mkimage -l) | 1.91ms | 5.31ms | 0.4x |
+| 4 MiB | `info` (dumpimage -l) | 1.91ms | 5.25ms | 0.4x |
+| 32 MiB | `-O fit` (mkimage -f) | 424.7ms | 59.41ms | 7.1x |
+| 32 MiB | `info` (mkimage -l) | 1.98ms | 20.79ms | 0.1x |
+| 32 MiB | `info` (dumpimage -l) | 2ms | 20.76ms | 0.1x |
+
+Writing is faster. Listing is behind: fwimg reads the whole file before it
+parses, where the references read the structure only. It is an open defect,
+go-binfmt/fwimg#33.
 
 ## WebAssembly and the playground (v0.8.0)
 
