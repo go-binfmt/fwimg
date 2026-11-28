@@ -35,6 +35,34 @@ func needFIT(t *testing.T) {
 	}
 }
 
+// oldMkimage reports whether mkimage predates 2026: Ubuntu's 2025.10 prints no
+// "Compatible:" line and pads the external data to 4, not 8 (both measured in CI
+// against 2025.10 and locally against 2026.10). An unreadable version counts as
+// new, so a surprise shows as a failure rather than a skip.
+func oldMkimage(t *testing.T) bool {
+	t.Helper()
+	out, err := exec.Command("mkimage", "-V").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	var year, month int
+	if _, err := fmt.Sscanf(string(out), "mkimage version %d.%d", &year, &month); err != nil {
+		return false
+	}
+	return year < 2026
+}
+
+// withoutCompat drops the "Compatible:" lines of a listing.
+func withoutCompat(s string) string {
+	var keep []string
+	for _, l := range strings.SplitAfter(s, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(l), "Compatible:") {
+			keep = append(keep, l)
+		}
+	}
+	return strings.Join(keep, "")
+}
+
 // tool runs a reference tool with the creation time and the time zone pinned,
 // and returns its output.
 func tool(t *testing.T, stamp uint32, name string, args ...string) string {
@@ -196,6 +224,10 @@ func TestDifferential_FITLayoutAgainstMkimage(t *testing.T) {
 			dir := t.TempDir()
 			o := fitCase()
 			v.set(&o)
+			old := oldMkimage(t)
+			if old && o.External {
+				t.Skip("mkimage before 2026 lays the external data out differently (pads to 4, not 8)")
+			}
 			its := itsFor(t, dir, o)
 			ref := filepath.Join(dir, "ref.fit")
 			tool(t, o.Time, "mkimage", append(slices.Clone(v.flags), "-f", its, ref)...)
@@ -253,7 +285,11 @@ func TestDifferential_FITLayoutAgainstMkimage(t *testing.T) {
 				t.Errorf("dumpimage -l of our file and of its own differ\nours:\n%s\nits:\n%s", g, w)
 			}
 			// Our listing is theirs.
-			if g, w := f.Listing(), tool(t, 0, "mkimage", "-l", ref); g != w {
+			g := f.Listing()
+			if old {
+				g = withoutCompat(g)
+			}
+			if w := tool(t, 0, "mkimage", "-l", ref); g != w {
 				t.Errorf("Listing differs from mkimage -l\nours:\n%s\nmkimage:\n%s", g, w)
 			}
 		})
@@ -289,7 +325,11 @@ func TestDifferential_FITListingAgainstMkimage(t *testing.T) {
 		if err != nil {
 			t.Fatal(name, err)
 		}
-		if g, w := f.Listing(), tool(t, 0, "mkimage", "-l", fp); g != w {
+		g := f.Listing()
+		if oldMkimage(t) {
+			g = withoutCompat(g)
+		}
+		if w := tool(t, 0, "mkimage", "-l", fp); g != w {
 			t.Errorf("%s file: Listing differs from mkimage -l (first difference at byte %d)\nours:\n%s\nmkimage:\n%s", name, firstDiff([]byte(g), []byte(w)), g, w)
 		}
 	}
