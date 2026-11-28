@@ -99,18 +99,21 @@ func (im *Image) CheckFlat(maxSize uint64) (uint64, error) {
 	if len(im.Segments) == 0 {
 		return 0, nil
 	}
-	limit := maxSize
-	if limit == 0 {
-		limit = DefaultMaxSize
-	}
-	if limit > math.MaxInt {
-		limit = math.MaxInt
-	}
+	limit := flatLimit(maxSize)
 	base := im.Base()
 	if span := im.Span(); span > limit {
 		return 0, fmt.Errorf("%w: 0x%x..0x%x is %d bytes, limit %d", ErrTooLarge, base, base+span, span, limit)
 	}
 	return base, nil
+}
+
+// flatLimit resolves a size bound: zero is DefaultMaxSize, and nothing above
+// math.MaxInt.
+func flatLimit(maxSize uint64) uint64 {
+	if maxSize == 0 {
+		maxSize = DefaultMaxSize
+	}
+	return min(maxSize, math.MaxInt)
 }
 
 // flatChunk is the buffer WriteFlat coalesces small pieces in; a piece at least
@@ -127,24 +130,48 @@ func (im *Image) WriteFlat(w io.Writer, pad byte, maxSize uint64) (uint64, error
 	if err != nil || len(im.Segments) == 0 {
 		return 0, err
 	}
+	return base, im.writeFlat(w, pad, base, flatLimit(maxSize))
+}
+
+// writeFlat is the write itself, with its own budget: it hands w at most limit
+// bytes and then refuses (ErrTooLarge). CheckFlat has already refused an image
+// whose span passes limit, so the budget is never reached; it is a second,
+// independent bound, so that one wrong comparison above cannot turn a refused
+// image into a file as long as the distance between two segments (a 128 TiB
+// span measured as a 227 GiB file on a disk that then filled). A test calls it
+// directly, without CheckFlat in front.
+func (im *Image) writeFlat(w io.Writer, pad byte, base, limit uint64) error {
 	// A bufio.Writer keeps its first error and refuses everything after it, so
 	// the writes below are not checked one by one: Flush returns it.
 	bw := bufio.NewWriterSize(w, int(min(im.Span(), flatChunk)))
 	var fill []byte // the gap block, made when the first gap needs it
-	at := base
+	at, budget := base, limit
+	over := func(n uint64) error {
+		if n > budget {
+			return fmt.Errorf("%w: the output passes its limit of %d bytes", ErrTooLarge, limit)
+		}
+		budget -= n
+		return nil
+	}
 	for _, s := range im.Segments {
 		for gap := s.Addr - at; gap > 0; {
 			if fill == nil {
 				fill = bytes.Repeat([]byte{pad}, int(min(im.Span(), flatChunk)))
 			}
-			n := int(min(gap, uint64(len(fill))))
+			n := min(gap, uint64(len(fill)))
+			if err := over(n); err != nil {
+				return err
+			}
 			bw.Write(fill[:n])
-			gap -= uint64(n)
+			gap -= n
+		}
+		if err := over(uint64(len(s.Data))); err != nil {
+			return err
 		}
 		bw.Write(s.Data)
 		at = s.End()
 	}
-	return base, bw.Flush()
+	return bw.Flush()
 }
 
 // Shift moves every segment so that the lowest byte is at base; the entry
