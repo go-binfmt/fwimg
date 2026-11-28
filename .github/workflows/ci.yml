@@ -163,7 +163,7 @@ jobs:
       - uses: actions/setup-go@v7
         with: { go-version: '1.27.4' }
       - uses: actions/setup-node@v7
-        with: { node-version: '24' }
+        with: { node-version: '26' }
       # wazero, pinned: the Go distribution's wasip1 wrapper runs it by name.
       - name: wazero
         run: GOBIN="$RUNNER_TEMP/bin" go install github.com/tetratelabs/wazero/cmd/wazero@v1.12.0 && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
@@ -186,7 +186,7 @@ jobs:
       - uses: actions/setup-go@v7
         with: { go-version: '1.27.4' }
       - uses: actions/setup-node@v7
-        with: { node-version: '24' }
+        with: { node-version: '26' }
       - name: wazero
         run: GOBIN="$RUNNER_TEMP/bin" go install github.com/tetratelabs/wazero/cmd/wazero@v1.12.0 && echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: |
