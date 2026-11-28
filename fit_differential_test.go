@@ -52,11 +52,18 @@ func oldMkimage(t *testing.T) bool {
 	return year < 2026
 }
 
-// withoutCompat drops the "Compatible:" lines of a listing.
+// withoutCompat drops the "Compatible:" lines of a listing, and the lines that
+// continue them (the further strings, indented under the value).
 func withoutCompat(s string) string {
 	var keep []string
+	in := false
 	for _, l := range strings.SplitAfter(s, "\n") {
-		if !strings.HasPrefix(strings.TrimSpace(l), "Compatible:") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(l), "Compatible:"):
+			in = true
+		case in && strings.HasPrefix(l, strings.Repeat(" ", 24)):
+		default:
+			in = false
 			keep = append(keep, l)
 		}
 	}
